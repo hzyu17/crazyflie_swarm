@@ -1,0 +1,53 @@
+<launch>
+  <!-- 0-raw, 1-pos, 2-trj -->
+  <param name="flight_mode" value="0" type="int" />
+
+  <param name="vehicle_num" value="2" type="int" />
+  <param name="joy_num" value="2" type="int" />
+
+
+  <arg name="joy_dev0" default="/dev/input/js0" />
+  <arg name="joy_dev1" default="/dev/input/js1" />
+
+  <include file="$(find vicon_bridge)/launch/vicon.launch"/>
+
+
+  <group ns="joygroup0">
+    <node pkg="joy" name="joy_node0" type="joy_node" >
+      <param name="dev" value="$(arg joy_dev0)" />
+    </node>
+  </group>
+
+  <group ns="joygroup1">
+    <node pkg="joy" name="joy_node1" type="joy_node" >
+      <param name="dev" value="$(arg joy_dev1)" />
+    </node>
+  </group>
+
+  <!--node pkg="easyfly" name="fly" type="fly" output="screen"/-->
+
+  <group ns="vehicle0">
+    <arg name="uri" default="radio://0/80/250K/E7E7E7E7E7" />
+    <node pkg="easyfly" name="controller0" type="controller" >
+      <param name="ctrl_node_num" value="0" />
+      <rosparam 
+        file="$(find easyfly)/config/pid_param.yaml"
+        command="load" 
+      />
+    </node>
+  </group>
+
+  <group ns="vehicle1">
+    <arg name="uri" default="radio://0//2M/E7E7E7E7E7" />
+    <node pkg="easyfly" name="controller1" type="controller" >
+      <param name="ctrl_node_num" value="1" />
+      <rosparam 
+        file="$(find easyfly)/config/pid_param.yaml"
+        command="load" 
+      />
+    </node>
+  </group>
+
+  <node pkg="easyfly" name="commander" type="commander" />
+  <node pkg="easyfly" name="linker" type="linker" output="screen"/>
+</launch>
