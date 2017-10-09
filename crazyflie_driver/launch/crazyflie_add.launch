@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+
+<launch>
+  <arg name="g_vehicle_num" default="2"/>
+  <!--arg name="g_joy_num" default="2"/-->
+  <arg name="tf_prefix" default="" />
+  <arg name="roll_trim" default="0" />
+  <arg name="pitch_trim" default="0" />
+  <arg name="enable_logging" default="True" />
+  <arg name="use_ros_time" default="True" />
+  <arg name="enable_logging_imu" default="True" />
+  <arg name="enable_logging_temperature" default="True" />
+  <arg name="enable_logging_magnetic_field" default="True" />
+  <arg name="enable_logging_pressure" default="True" />
+  <arg name="enable_logging_battery" default="True" />
+  <param name="enable_logging" value="$(arg enable_logging)" />
+  <param name="use_ros_time" value="$(arg use_ros_time)" />
+  <param name="enable_logging_imu" value="$(arg enable_logging_imu)" />
+  <param name="enable_logging_temperature" value="$(arg enable_logging_temperature)" />
+  <param name="enable_logging_magnetic_field" value="$(arg enable_logging_magnetic_field)" />
+  <param name="enable_logging_pressure" value="$(arg enable_logging_pressure)" />
+  <param name="enable_logging_battery" value="$(arg enable_logging_battery)" />
+
+  <group ns="vehicle0">
+      <arg name="uri" default="radio://0/80/250K/E7E7E7E7E7" />
+      <node pkg="crazyflie_driver" type="crazyflie_add" name="crazyflie_add0" output="screen">
+        <param name="uri" value="$(arg uri)" />
+        <param name="group_index" value="0">
+        <param name="tf_prefix" value="$(arg tf_prefix)" />
+        <param name="roll_trim" value="$(arg roll_trim)" />
+        <param name="pitch_trim" value="$(arg pitch_trim)" />
+
+      </node>
+  </group>
+
+  <group ns="vehicle1">
+      <arg name="uri" default="radio://0/0/2M/E7E7E7E7E7" />
+
+      <node pkg="crazyflie_driver" type="crazyflie_add" name="crazyflie_add1" output="screen">
+          <param name="group_index" value="1">
+          <param name="uri" value="$(arg uri)" />
+          <param name="tf_prefix" value="$(arg tf_prefix)" />
+          <param name="roll_trim" value="$(arg roll_trim)" />
+          <param name="pitch_trim" value="$(arg pitch_trim)" />
+      </node>
+  </group>
+</launch>
