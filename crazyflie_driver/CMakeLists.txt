@@ -5,9 +5,6 @@ project(crazyflie_driver)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  genmsg
   message_generation
   std_msgs
   tf
@@ -42,7 +39,6 @@ add_message_files(
   FILES
   LogBlock.msg
   GenericLogData.msg
-  Yaw_est.msg
 )
 
 ## Generate added messages and services with any dependencies listed here

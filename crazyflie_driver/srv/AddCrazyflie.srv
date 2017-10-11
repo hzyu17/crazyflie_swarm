@@ -1,8 +1,7 @@
-int32 g_vehicle_num
-string[] uri_v
-string[] tf_prefix_v
-float32[] roll_trim_v
-float32[] pitch_trim_v
+string uri
+string tf_prefix
+float32 roll_trim
+float32 pitch_trim
 bool enable_logging
 bool enable_parameters
 LogBlock[] log_blocks

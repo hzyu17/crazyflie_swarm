@@ -1,5 +1,4 @@
 #include "ros/ros.h"
-#include "crazyflie_driver/Yaw_est.h"
 #include "crazyflie_driver/AddCrazyflie.h"
 #include "crazyflie_driver/LogBlock.h"
 #include "crazyflie_driver/GenericLogData.h"
@@ -10,12 +9,10 @@
 #include "sensor_msgs/Temperature.h"
 #include "sensor_msgs/MagneticField.h"
 #include "std_msgs/Float32.h"
-#include <stdio.h> //sprintf
+
 //#include <regex>
 #include <thread>
 #include <mutex>
-#include <math.h>
-#define _USE_MATH_DEFINES //PI
 
 #include <crazyflie_cpp/Crazyflie.h>
 
@@ -71,13 +68,7 @@ public:
     , m_pubRssi() //Received Signal Strength Indication
     , m_sentSetpoint(false)
   {
-    char msg_name[50];
-    m_uri = link_uri;
-    ros::NodeHandle n("~");
-    n.getParam("group_index",m_group_index);
-    sprintf(msg_name,"vehicle%d/yaw_est",m_group_index);
-    m_yawpub = n.advertise<crazyflie_driver::Yaw_est>(msg_name,5);
-
+    ros::NodeHandle n;
     m_subscribeCmdVel = n.subscribe(tf_prefix + "/cmd_vel", 1, &CrazyflieROS::cmdVelChanged, this);
     m_serviceEmergency = n.advertiseService(tf_prefix + "/emergency", &CrazyflieROS::emergency, this);
     m_serviceUpdateParams = n.advertiseService(tf_prefix + "/update_params", &CrazyflieROS::updateParams, this);
@@ -109,15 +100,6 @@ public:
   }
 
 private:
-  int m_group_index;
-  ros::Publisher m_yawpub;
-  float m_pitch_est;
-  float m_roll_est;
-  float m_xh;
-  float m_yh;
-  crazyflie_driver::Yaw_est msg_yaw_est;
-  //float m_yaw_est;
-
   struct logImu {
     float acc_x;
     float acc_y;
@@ -354,31 +336,6 @@ private:
   }
 
   void onImuData(uint32_t time_in_ms, logImu* data) {
-
-    /*void accPR(const sensor_msgs::Imu::ConstPtr& msg)
-    {
-
-      m_pitch_est = -(msg->linear_acceleration.x,msg->linear_acceleration.y,msg->linear_acceleration.z);//rad
-      m_roll_est = (msg->linear_acceleration.y,msg->linear_acceleration.x,msg->linear_acceleration.z); //rad
-    }
-    void magPRYCallback(const sensor_msgs::MagneticField::ConstPtr& msg)
-    {
-      m_xh = msg->magnetic_field.y*cos(m_roll_est)+msg->magnetic_field.x*sin(m_roll_est)*sin(m_pitch_est)-msg->magnetic_field.z*cos(m_pitch_est)*sin(m_roll_est);    
-      m_yh = msg->magnetic_field.x*cos(m_pitch_est)+msg->magnetic_field.z*sin(m_pitch_est);
-      m_est.yaw_est = -atan2(m_xh,m_yh)+1.57f;
-      if(m_est.yaw_est < -M_PI )
-        m_est.yaw_est = m_est.yaw_est + 2*M_PI;
-      if(m_est.yaw_est > M_PI )
-        m_est.yaw_est = m_est.yaw_est - 2*M_PI;
-      /*stateAtt->Euler.R = roll;
-      stateAtt->Euler.P = m_pitch_est;
-      stateAtt->Euler.Y = yaw;
-      stateAtt->rate.R = 0;
-      stateAtt->rate.P = 0;
-      stateAtt->rate.Y = 0;
-      euler2quaternion(&stateAtt->Euler, &stateAtt->Q);
-      quaternion2rotation(&stateAtt->Q, &stateAtt->R);*/
-    //}
     if (m_enable_logging_imu) {
       sensor_msgs::Imu msg;
       if (m_use_ros_time) {
@@ -399,11 +356,6 @@ private:
       msg.linear_acceleration.y = data->acc_y * 9.81;
       msg.linear_acceleration.z = data->acc_z * 9.81;
 
-      //calcul pitch, roll estimation
-      m_pitch_est = -(msg.linear_acceleration.x,msg.linear_acceleration.y,msg.linear_acceleration.z);
-      m_roll_est = (msg.linear_acceleration.y,msg.linear_acceleration.x,msg.linear_acceleration.z);
-
-      //publish
       m_pubImu.publish(msg);
     }
   }
@@ -436,21 +388,6 @@ private:
       msg.magnetic_field.x = data->mag_x;
       msg.magnetic_field.y = data->mag_y;
       msg.magnetic_field.z = data->mag_z;
-
-      //calcul yaw estimation
-      if (m_enable_logging_imu){
-        msg_yaw_est.uri = m_uri;
-        msg_yaw_est.group_index = m_group_index;
-        m_xh = msg.magnetic_field.y*cos(m_roll_est)+msg.magnetic_field.x*sin(m_roll_est)*sin(m_pitch_est)-msg.magnetic_field.z*cos(m_pitch_est)*sin(m_roll_est);    
-        m_yh = msg.magnetic_field.x*cos(m_pitch_est)+msg.magnetic_field.z*sin(m_pitch_est);
-        msg_yaw_est.Yaw_est = -atan2(m_xh,m_yh)+1.57f;
-        if(msg_yaw_est.Yaw_est < -M_PI )
-          msg_yaw_est.Yaw_est = msg_yaw_est.Yaw_est + 2*M_PI;
-        if(msg_yaw_est.Yaw_est > M_PI )
-          msg_yaw_est.Yaw_est = msg_yaw_est.Yaw_est - 2*M_PI;
-          m_yawpub.publish(msg_yaw_est);
-      }
-      //publish
       m_pubMag.publish(msg);
     }
 
@@ -500,7 +437,6 @@ private:
 
 private:
   Crazyflie m_cf;
-  std::string m_uri;
   std::string m_tf_prefix;
   bool m_isEmergency;
   float m_roll_trim;
@@ -533,25 +469,21 @@ bool add_crazyflie(
   crazyflie_driver::AddCrazyflie::Request  &req,
   crazyflie_driver::AddCrazyflie::Response &res)
 {
-  for (int i=0;i<req.g_vehicle_num;i++){
   ROS_INFO("Adding %s as %s with trim(%f, %f). Logging: %d, Parameters: %d, Use ROS time: %d",
-    req.uri_v[i].c_str(),
-    req.tf_prefix_v[i].c_str(),
-    req.roll_trim_v[i],
-    req.pitch_trim_v[i],
+    req.uri.c_str(),
+    req.tf_prefix.c_str(),
+    req.roll_trim,
+    req.pitch_trim,
     req.enable_parameters,
     req.enable_logging,
     req.use_ros_time);
-    }
 
   // Leak intentionally
-  std::vector<CrazyflieROS*> cfs;
-  for (int i=0;i<req.g_vehicle_num;i++){
-    CrazyflieROS* cf = new CrazyflieROS(
-    req.uri_v[i],
-    req.tf_prefix_v[i],
-    req.roll_trim_v[i],
-    req.pitch_trim_v[i],
+  CrazyflieROS* cf = new CrazyflieROS(
+    req.uri,
+    req.tf_prefix,
+    req.roll_trim,
+    req.pitch_trim,
     req.enable_logging,
     req.enable_parameters,
     req.log_blocks,
@@ -561,8 +493,6 @@ bool add_crazyflie(
     req.enable_logging_magnetic_field,
     req.enable_logging_pressure,
     req.enable_logging_battery);
-    cfs.insert(cfs.begin()+i,cf);
-    }
 
   return true;
 }
