@@ -1,0 +1,4 @@
+geometry_msgs/Vector3Stamped pos_sp
+geometry_msgs/Vector3Stamped vel_ff
+geometry_msgs/Vector3Stamped acc_ff
+float32 yaw_sp
