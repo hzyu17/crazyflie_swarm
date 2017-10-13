@@ -133,9 +133,9 @@ public:
 
 				//	static float yaw_sp;
 					for(int i=0;i<g_joy_num && i<g_vehicle_num;i++){
-						m_ctrl_v[i].rawctrl_msg.raw_att_sp.x = -m_joy_v[i].axes[0] * 30 * DEG2RAD;//+-1
-						m_ctrl_v[i].rawctrl_msg.raw_att_sp.y = m_joy_v[i].axes[1] * 30 * DEG2RAD;
-						m_ctrl_v[i].rawctrl_msg.raw_att_sp.z = m_joy_v[i].axes[3] * 20 * DEG2RAD;//rate
+						m_ctrl_v[i].rawctrl_msg.raw_att_sp.x = -m_joy_v[0].axes[0] * 30 * DEG2RAD;//+-1
+						m_ctrl_v[i].rawctrl_msg.raw_att_sp.y = m_joy_v[0].axes[1] * 30 * DEG2RAD;
+						m_ctrl_v[i].rawctrl_msg.raw_att_sp.z = m_joy_v[0].axes[3] * 20 * DEG2RAD;//rate
 						m_ctrl_v[i].rawctrl_msg.throttle = m_joy_v[i].axes[2];//0-1
 						if(m_ctrl_v[i].rawctrl_msg.throttle<0){
 							m_ctrl_v[i].rawctrl_msg.throttle=0;
