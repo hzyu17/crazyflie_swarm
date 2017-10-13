@@ -19,7 +19,8 @@ add_message_files(
   pos_ctrl_sp.msg
   raw_ctrl_sp.msg
   trj_ctrl_sp.msg
-  state_est.msg
+  pos_est.msg
+  att_est.msg
   output.msg
 )
 generate_messages(
@@ -70,6 +71,20 @@ add_executable(commander
   src/commander.cpp
 )
 target_link_libraries(commander
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+add_executable(swarm_controller
+  src/swarm_controller.cpp
+)
+target_link_libraries(swarm_controller
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+add_executable(swarm_linker
+  src/swarm_linker.cpp
+)
+target_link_libraries(swarm_linker
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
 )
