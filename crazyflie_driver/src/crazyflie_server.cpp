@@ -1,4 +1,5 @@
 #include "ros/ros.h"
+#include "crazyflie_driver/Yaw_est.h"
 #include "crazyflie_driver/AddCrazyflie.h"
 #include "crazyflie_driver/LogBlock.h"
 #include "crazyflie_driver/GenericLogData.h"
@@ -8,15 +9,28 @@
 #include "sensor_msgs/Imu.h"
 #include "sensor_msgs/Temperature.h"
 #include "sensor_msgs/MagneticField.h"
+#include "commons.h"
+#include <crazyflie_driver/num_vehiclepub.h>
 #include "std_msgs/Float32.h"
-
+#include <stdio.h> //sprintf
+#include <easyfly/output.h>
+//#include "../MessageTypes/type_methods.h"
 //#include <regex>
 #include <thread>
 #include <mutex>
+#include <math.h>
+#define _USE_MATH_DEFINES //PI
 
 #include <crazyflie_cpp/Crazyflie.h>
 
 constexpr double pi() { return std::atan(1)*4; }
+
+float data_2_angle(float x, float y, float z)	 //in rad
+{
+	float res;
+	res = atan2(x,sqrtf(y*y+z*z));
+	return res;
+}
 
 double degToRad(double deg) {
     return deg / 180.0 * pi();
@@ -26,12 +40,14 @@ double radToDeg(double rad) {
     return rad * 180.0 / pi();
 }
 
+
 class CrazyflieROS
 {
 public:
   CrazyflieROS(
     const std::string& link_uri,
     const std::string& tf_prefix,
+    int group_index,
     float roll_trim,
     float pitch_trim,
     bool enable_logging,
@@ -44,6 +60,7 @@ public:
     bool enable_logging_pressure,
     bool enable_logging_battery)
     : m_cf(link_uri)
+    , m_uri(link_uri)
     , m_tf_prefix(tf_prefix)
     , m_isEmergency(false)
     , m_roll_trim(roll_trim)
@@ -67,39 +84,63 @@ public:
     , m_pubBattery()
     , m_pubRssi() //Received Signal Strength Indication
     , m_sentSetpoint(false)
+    , m_group_index(group_index)
   {
-    ros::NodeHandle n;
+    char msg_name[50];
+    m_uri = link_uri;
+    ros::NodeHandle n("~");
+    ros::NodeHandle nh;
+    sprintf(msg_name,"/vehicle%d/yaw_est",m_group_index);
+    m_yawpub = n.advertise<crazyflie_driver::Yaw_est>(msg_name,5);
+
     m_subscribeCmdVel = n.subscribe(tf_prefix + "/cmd_vel", 1, &CrazyflieROS::cmdVelChanged, this);
     m_serviceEmergency = n.advertiseService(tf_prefix + "/emergency", &CrazyflieROS::emergency, this);
     m_serviceUpdateParams = n.advertiseService(tf_prefix + "/update_params", &CrazyflieROS::updateParams, this);
 
+    sprintf(msg_name,"/vehicle%d/output",group_index);
+    m_outputsub = nh.subscribe<easyfly::output>(msg_name,5,&CrazyflieROS::outputCallback, this);
+
     if (m_enable_logging_imu) {
-      m_pubImu = n.advertise<sensor_msgs::Imu>(tf_prefix + "/imu", 10);
+    	sprintf(msg_name,"/vehicle%d/tf_prefix",m_group_index);
+      //m_pubImu = n.advertise<sensor_msgs::Imu>(tf_prefix + "/imu", 10);
+    	m_pubImu = n.advertise<sensor_msgs::Imu>(msg_name, 10);
     }
     if (m_enable_logging_temperature) {
-      m_pubTemp = n.advertise<sensor_msgs::Temperature>(tf_prefix + "/temperature", 10);
+    	sprintf(msg_name,"/vehicle%d/Temperature",m_group_index);
+      m_pubTemp = n.advertise<sensor_msgs::Temperature>(msg_name, 10);
     }
     if (m_enable_logging_magnetic_field) {
-      m_pubMag = n.advertise<sensor_msgs::MagneticField>(tf_prefix + "/magnetic_field", 10);
+    	sprintf(msg_name,"/vehicle%d/magnetic_field",m_group_index);
+      m_pubMag = n.advertise<sensor_msgs::MagneticField>(msg_name, 10);
     }
     if (m_enable_logging_pressure) {
-      m_pubPressure = n.advertise<std_msgs::Float32>(tf_prefix + "/pressure", 10);
+    	sprintf(msg_name,"/vehicle%d/pressure",m_group_index);
+      m_pubPressure = n.advertise<std_msgs::Float32>(msg_name, 10);
     }
     if (m_enable_logging_battery) {
-      m_pubBattery = n.advertise<std_msgs::Float32>(tf_prefix + "/battery", 10);
+    	sprintf(msg_name,"/vehicle%d/battery",m_group_index);
+      m_pubBattery = n.advertise<std_msgs::Float32>(msg_name, 10);
     }
-    m_pubRssi = n.advertise<std_msgs::Float32>(tf_prefix + "/rssi", 10);
+    sprintf(msg_name,"/vehicle%d/rssi",m_group_index);
+    m_pubRssi = n.advertise<std_msgs::Float32>(msg_name, 10);
 
     for (auto& logBlock : m_logBlocks)
     {
       m_pubLogDataGeneric.push_back(n.advertise<crazyflie_driver::GenericLogData>(tf_prefix + "/" + logBlock.topic_name, 10));
     }
+    msg_yaw_est.uri = m_uri;
+    msg_yaw_est.group_index = m_group_index;
 
+    msg_yaw_est.Roll_est = m_roll_trim;
+    msg_yaw_est.Pitch_est = m_pitch_trim;
+    msg_yaw_est.Yaw_est = 0.0f;
+    
     std::thread t(&CrazyflieROS::run, this);
     t.detach();
   }
 
 private:
+
   struct logImu {
     float acc_x;
     float acc_y;
@@ -119,7 +160,19 @@ private:
   } __attribute__((packed));
 
 private:
-  bool emergency(
+	void outputCallback(const easyfly::output::ConstPtr& msg)
+	{
+		m_output.att_sp.x = msg->att_sp.x;
+		m_output.att_sp.y = msg->att_sp.y;
+		m_output.att_sp.z = msg->att_sp.z;
+		m_output.throttle = msg->throttle;
+		m_cf.sendSetpoint(
+				m_output.att_sp.x * RAD2DEG,
+				m_output.att_sp.y * RAD2DEG,
+				m_output.att_sp.z * RAD2DEG,
+				m_output.throttle * 40000);
+	}
+  	bool emergency(
     std_srvs::Empty::Request& req,
     std_srvs::Empty::Response& res)
   {
@@ -241,6 +294,8 @@ private:
     std::unique_ptr<LogBlock<logImu> > logBlockImu;
     std::unique_ptr<LogBlock<log2> > logBlock2;
     std::vector<std::unique_ptr<LogBlockGeneric> > logBlocksGeneric(m_logBlocks.size());
+
+
     if (m_enableLogging) {
       //printf("%s\n","HELLO!" );
       std::function<void(const crtpPlatformRSSIAck*)> cb_ack = std::bind(&CrazyflieROS::onEmptyAck, this, std::placeholders::_1);
@@ -306,7 +361,6 @@ private:
         ++i;
       }
 
-
     }
 
     ROS_INFO("Ready...");
@@ -336,6 +390,7 @@ private:
   }
 
   void onImuData(uint32_t time_in_ms, logImu* data) {
+
     if (m_enable_logging_imu) {
       sensor_msgs::Imu msg;
       if (m_use_ros_time) {
@@ -356,6 +411,12 @@ private:
       msg.linear_acceleration.y = data->acc_y * 9.81;
       msg.linear_acceleration.z = data->acc_z * 9.81;
 
+      //calcul pitch, roll estimation
+      m_pitch_est = -data_2_angle(msg.linear_acceleration.x,msg.linear_acceleration.y,msg.linear_acceleration.z);
+      m_roll_est = data_2_angle(msg.linear_acceleration.y,msg.linear_acceleration.x,msg.linear_acceleration.z);
+      msg_yaw_est.Roll_est = m_roll_est;
+      msg_yaw_est.Pitch_est = m_pitch_est;
+      //publish
       m_pubImu.publish(msg);
     }
   }
@@ -388,6 +449,19 @@ private:
       msg.magnetic_field.x = data->mag_x;
       msg.magnetic_field.y = data->mag_y;
       msg.magnetic_field.z = data->mag_z;
+
+      //calcul yaw estimation
+      if (m_enable_logging_imu){
+        m_xh = msg.magnetic_field.y*cos(m_roll_trim)+msg.magnetic_field.x*sin(m_roll_trim)*sin(m_pitch_trim)-msg.magnetic_field.z*cos(m_pitch_trim)*sin(m_roll_trim);    
+        m_yh = msg.magnetic_field.x*cos(m_pitch_trim)+msg.magnetic_field.z*sin(m_pitch_trim);
+        msg_yaw_est.Yaw_est = -atan2(m_xh,m_yh)+1.57f;
+        if(msg_yaw_est.Yaw_est < -M_PI )
+          msg_yaw_est.Yaw_est += 2*M_PI;
+        if(msg_yaw_est.Yaw_est > M_PI )
+          msg_yaw_est.Yaw_est -= 2*M_PI;
+        m_yawpub.publish(msg_yaw_est);
+      }
+      //publish
       m_pubMag.publish(msg);
     }
 
@@ -437,10 +511,16 @@ private:
 
 private:
   Crazyflie m_cf;
+  std::string m_uri;
   std::string m_tf_prefix;
   bool m_isEmergency;
   float m_roll_trim;
   float m_pitch_trim;
+  int m_group_index;
+  float m_pitch_est;
+  float m_roll_est;
+  float m_xh;
+  float m_yh;
   bool m_enableLogging;
   bool m_enableParameters;
   std::vector<crazyflie_driver::LogBlock> m_logBlocks;
@@ -454,34 +534,40 @@ private:
   ros::ServiceServer m_serviceEmergency;
   ros::ServiceServer m_serviceUpdateParams;
   ros::Subscriber m_subscribeCmdVel;
+  ros::Subscriber m_outputsub;
   ros::Publisher m_pubImu;
   ros::Publisher m_pubTemp;
   ros::Publisher m_pubMag;
   ros::Publisher m_pubPressure;
   ros::Publisher m_pubBattery;
   ros::Publisher m_pubRssi;
+  ros::Publisher m_yawpub;
   std::vector<ros::Publisher> m_pubLogDataGeneric;
-
+  crazyflie_driver::Yaw_est msg_yaw_est;
   bool m_sentSetpoint;
+  easyfly::output m_output;
 };
-
+//.c_str()
 bool add_crazyflie(
   crazyflie_driver::AddCrazyflie::Request  &req,
   crazyflie_driver::AddCrazyflie::Response &res)
 {
-  ROS_INFO("Adding %s as %s with trim(%f, %f). Logging: %d, Parameters: %d, Use ROS time: %d",
+  	ROS_INFO("Adding %s as %s with trim(%f, %f). Logging: %d, Parameters: %d, Use ROS time: %d, group_index: %d, g_vehicle_num: %d",
     req.uri.c_str(),
     req.tf_prefix.c_str(),
     req.roll_trim,
     req.pitch_trim,
     req.enable_parameters,
     req.enable_logging,
-    req.use_ros_time);
+    req.use_ros_time,
+    req.group_index,
+    req.g_vehicle_num);
 
   // Leak intentionally
-  CrazyflieROS* cf = new CrazyflieROS(
+    CrazyflieROS* cf = new CrazyflieROS(
     req.uri,
     req.tf_prefix,
+    req.group_index,
     req.roll_trim,
     req.pitch_trim,
     req.enable_logging,
@@ -493,16 +579,19 @@ bool add_crazyflie(
     req.enable_logging_magnetic_field,
     req.enable_logging_pressure,
     req.enable_logging_battery);
-
-  return true;
+  	return true;
 }
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "crazyflie_server");
+  
+  ros::init(argc, argv, "/vehicle0");
   ros::NodeHandle n;
+  char servicename[50];
+  ros::Subscriber mgroupsub;
 
-  ros::ServiceServer service = n.advertiseService("add_crazyflie", add_crazyflie);
+  //use the absolute addresse for all cfs
+  ros::ServiceServer service = n.advertiseService("/add_crazyflie", add_crazyflie);
   ros::spin();
 
   return 0;
