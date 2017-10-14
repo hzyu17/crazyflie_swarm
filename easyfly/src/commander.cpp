@@ -113,7 +113,7 @@ public:
 	void run(double frequency)
 	{
 		ros::NodeHandle node;
-		node.getParam("/flight_mode", m_flight_mode);
+		node.getParam("flight_mode", m_flight_mode);
 		ros::Timer timer = node.createTimer(ros::Duration(1.0/frequency), &Commander::iteration, this);
 		ros::spin();
 	}
@@ -132,15 +132,15 @@ public:
 				case MODE_RAW:{
 
 				//	static float yaw_sp;
-					for(int i=0;i<g_joy_num && i<g_vehicle_num;i++){
+					for(int i=0; i<g_vehicle_num;i++){
 						m_ctrl_v[i].rawctrl_msg.raw_att_sp.x = -m_joy_v[0].axes[0] * 30 * DEG2RAD;//+-1
 						m_ctrl_v[i].rawctrl_msg.raw_att_sp.y = m_joy_v[0].axes[1] * 30 * DEG2RAD;
-						m_ctrl_v[i].rawctrl_msg.raw_att_sp.z = m_joy_v[0].axes[3] * 20 * DEG2RAD;//rate
-						m_ctrl_v[i].rawctrl_msg.throttle = m_joy_v[i].axes[2];//0-1
+						m_ctrl_v[i].rawctrl_msg.raw_att_sp.z = m_joy_v[0].axes[2] * 20 * DEG2RAD;//rate
+						m_ctrl_v[i].rawctrl_msg.throttle = m_joy_v[0].axes[3];//0-1
 						if(m_ctrl_v[i].rawctrl_msg.throttle<0){
 							m_ctrl_v[i].rawctrl_msg.throttle=0;
-							
 						}
+						
 						m_rawpub_v[i].publish(m_ctrl_v[i].rawctrl_msg);
 					}
 				}
@@ -166,13 +166,13 @@ public:
 
 					switch(m_flight_state){
 						case Idle:{
-							for(int i=0;i<g_joy_num && i<g_vehicle_num;i++){
+							for(int i=0;i<g_vehicle_num;i++){
 							}
 							//all motors off
 						}
 						break;
 						case Automatic:{
-							for(int i=0;i<g_joy_num && i<g_vehicle_num;i++){
+							for(int i=0;i<g_vehicle_num;i++){
 								float pos_move_rate[3];
 								pos_move_rate[0] = m_joy_v[i].axes[0] * 2.0;
 								pos_move_rate[1] = m_joy_v[i].axes[1] * 2.0;
@@ -190,7 +190,7 @@ public:
 						}
 						break;
 						case TakingOff:{
-							for(int i=0;i<g_joy_num && i<g_vehicle_num;i++){
+							for(int i=0;i<g_vehicle_num;i++){
 								control_takeoff(i,dt);
 								m_pospub_v[i].publish(m_ctrl_v[i].posctrl_msg);
 							}
@@ -198,7 +198,7 @@ public:
 						}
 						break;
 						case Landing:{
-							for(int i=0;i<g_joy_num && i<g_vehicle_num;i++){
+							for(int i=0;i<g_vehicle_num;i++){
 								control_landing(i, dt);
 							}
 							//TODO judge if it is time to get into Idle
@@ -238,6 +238,7 @@ public:
 	void joyCallback(const sensor_msgs::Joy::ConstPtr& joy, int joy_index)
 	{
 		//0 PosCtrl, 1 AttCtrl
+		joy_index=0;
 		#define MAX_JOYS 5
 		static bool l_buttons[MAX_JOYS][14];//at most 5 joysticks
 		static int l_arrow[MAX_JOYS][2];
@@ -251,10 +252,11 @@ public:
 		for(int i=0;i<14;i++){
 			l_buttons[joy_index][i] = m_joy_v[joy_index].curr_buttons[i];
 		}
-		m_joy_v[joy_index].axes[0] = joy->axes[2];//roll
-		m_joy_v[joy_index].axes[1] = joy->axes[5];//pitch
-		m_joy_v[joy_index].axes[2] = joy->axes[1];//yaw
-		m_joy_v[joy_index].axes[3] = joy->axes[0];//thr
+										
+		m_joy_v[joy_index].axes[0] = joy->axes[3];//roll
+		m_joy_v[joy_index].axes[1] = joy->axes[4];//pitch
+		m_joy_v[joy_index].axes[2] = joy->axes[0];//yaw
+		m_joy_v[joy_index].axes[3] = joy->axes[1];//thr
 		if(joy->axes[6]>0.5)//left and right button belong to one axes
 			m_joy_v[joy_index].curr_arrow[0] = 1;
 		else if(joy->axes[6]<-0.5)
@@ -341,7 +343,8 @@ int main(int argc, char **argv)
 	ros::init(argc, argv, "commander");
 	ros::NodeHandle n("~");
 	// ros::NodeHandle n;
-	n.getParam("/vehicle_num", g_vehicle_num);
+	n.getParam("/g_vehicle_num", g_vehicle_num);
+	printf("/g_vehicle_num%d\n",g_vehicle_num);
 	n.getParam("/joy_num", g_joy_num);
 //	n.getParam("/flight_mode", g_flight_mode);this has moved to function run
 	Commander commander(n);
