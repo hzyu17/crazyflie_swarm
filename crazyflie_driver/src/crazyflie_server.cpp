@@ -97,7 +97,7 @@ public:
     m_serviceEmergency = n.advertiseService(tf_prefix + "/emergency", &CrazyflieROS::emergency, this);
     m_serviceUpdateParams = n.advertiseService(tf_prefix + "/update_params", &CrazyflieROS::updateParams, this);
 
-    sprintf(msg_name,"/vehicle%d/output",group_index);
+    sprintf(msg_name,"/vehicle%d/output",m_group_index);
     m_outputsub = nh.subscribe<easyfly::output>(msg_name,5,&CrazyflieROS::outputCallback, this);
 
     if (m_enable_logging_imu) {
@@ -166,12 +166,13 @@ private:
 		m_output.att_sp.y = msg->att_sp.y;
 		m_output.att_sp.z = msg->att_sp.z;
 		m_output.throttle = msg->throttle;
-		m_cf.sendSetpoint(
-				m_output.att_sp.x * RAD2DEG,
+		//printf("HELLO_output!!!att_sp.x%f\natt_sp.y%f\natt_sp.z%f\nthrottle%f",m_output.att_sp.x,m_output.att_sp.y,m_output.att_sp.z,m_output.throttle);
+        m_cf.sendSetpoint(m_output.att_sp.x * RAD2DEG,
 				m_output.att_sp.y * RAD2DEG,
 				m_output.att_sp.z * RAD2DEG,
 				m_output.throttle * 40000);
-	}
+        m_sentSetpoint = true;
+	}	
   	bool emergency(
     std_srvs::Empty::Request& req,
     std_srvs::Empty::Response& res)
@@ -252,10 +253,10 @@ private:
   {
     // m_cf.reboot();
     m_cf.logReset();
-
+    float frequency = 50;
     std::function<void(float)> cb_lq = std::bind(&CrazyflieROS::onLinkQuality, this, std::placeholders::_1);
     m_cf.setLinkQualityCallback(cb_lq);
-
+    printf("HELLO_index%d",m_group_index);
     auto start = std::chrono::system_clock::now();
 
     if (m_enableParameters)
@@ -297,7 +298,6 @@ private:
 
 
     if (m_enableLogging) {
-      //printf("%s\n","HELLO!" );
       std::function<void(const crtpPlatformRSSIAck*)> cb_ack = std::bind(&CrazyflieROS::onEmptyAck, this, std::placeholders::_1);
       m_cf.setEmptyAckCallback(cb_ack);
 
@@ -360,7 +360,6 @@ private:
         logBlocksGeneric[i]->start(logBlock.frequency / 10);
         ++i;
       }
-
     }
 
     ROS_INFO("Ready...");
