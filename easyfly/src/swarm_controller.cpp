@@ -132,7 +132,7 @@ private:
 	PID m_pidYaw;
 	int m_flight_state, m_flight_mode;
 	ros::Publisher m_outputpub;
-	ros::Subscriber m_pos_estsub,m_att_estsub, m_magneticsub, m_accsub, num_vehiclepub;
+	ros::Subscriber m_pos_estsub,m_att_estsub, m_accsub, num_vehiclepub;
 	ros::Subscriber m_rawsub, m_possub, m_trjsub;
 	ros::Subscriber m_cmdsub;
 	ros::Subscriber num_vehiclesub;
@@ -145,19 +145,8 @@ private:
 	};
 	M_Ctrl m_ctrl;
 
-	/*struct M_Est
-	{
-		easyfly::pos_est m_pos_est;
-		easyfly::att_est m_att_est;
-	};
-	M_Est m_est;*/
-
 	Vector3f v_vel_sp, v_acc_sp, v_att_sp, m_pos_est, m_vel_est, m_att_est;
-//	float yawrate_sp;
-	//float m_xh,m_yh;
-    //float m_pitch_est,m_roll_est,m_yaw_est; 
-	//easyfly::pos_est m_pos_est;
-	//easyfly::att_est m_att_est;
+
 	easyfly::commands m_cmd;
 	easyfly::output m_output;
 	std::string tf_prefix;
@@ -210,9 +199,8 @@ public:
 		,m_previousTime(ros::Time::now())
 	{
 		ros::NodeHandle nh("~");//~ means private param
-		nh.getParam("ctrl_node_num", m_group_index);
-	//	ros::param::get("ctrl_node_num", m_group_index);
-	//	m_group_index = node_index;
+		nh.getParam("group_index", m_group_index);
+
 		char msg_name[50];
   		num_vehiclepub = nh.subscribe<crazyflie_driver::num_vehiclepub>("/num_vehiclepub",5,&Swarm_Controller::num_veh_Callback, this);
 
@@ -258,6 +246,7 @@ public:
 		else{
 			switch(m_flight_mode){
 				case MODE_RAW:{
+
 					m_output.att_sp.x = m_ctrl.raw.raw_att_sp.x;
 					m_output.att_sp.y = m_ctrl.raw.raw_att_sp.y;
 					m_output.att_sp.z = m_ctrl.raw.raw_att_sp.z;
@@ -343,7 +332,7 @@ public:
 	}
 
 	void rawctrlCallback(const easyfly::raw_ctrl_sp::ConstPtr& ctrl)
-	{
+	{	
 		m_ctrl.raw.raw_att_sp.x = ctrl->raw_att_sp.x;
 		m_ctrl.raw.raw_att_sp.y = ctrl->raw_att_sp.y;
 		m_ctrl.raw.raw_att_sp.z = ctrl->raw_att_sp.z;
