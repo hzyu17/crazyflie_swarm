@@ -1,26 +1,29 @@
 #include "ros/ros.h"
-#include <stdio.h> //sprintf
+#include <stdio.h> //sprintf, FILE* operations
 #include <iostream>
 #include <vector>
 #include <sensor_msgs/Joy.h>
 #include <tf/transform_listener.h>
 #include <geometry_msgs/Twist.h>
+#include <geometry_msgs/TransformStamped.h>
 #include <easyfly/pos_ctrl_sp.h>
 #include <easyfly/raw_ctrl_sp.h>
 #include <easyfly/trj_ctrl_sp.h>
+#include <easyfly/pos_est.h>
+#include <easyfly/att_est.h>
 #include <easyfly/commands.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/MagneticField.h>
-#include <easyfly/pos_est.h>
-#include <easyfly/att_est.h>
 #include <easyfly/output.h>
 #include "commons.h"
-#include <crazyflie_driver/num_vehiclepub.h>
-
+//#include <crazyflie_driver/num_vehiclepub.h>
+#include "crazyflie_driver/Yaw_est.h"
 #include <math.h>
 #include "../include/Eigen/Eigen/Eigen"
 #include "../include/Eigen/Eigen/Geometry"
+#include <fstream>
 using namespace Eigen;
+using namespace std;
 #define _USE_MATH_DEFINES //PI
 
 int g_joy_num=1;
@@ -28,9 +31,16 @@ int g_joy_num=1;
 double get(
     const ros::NodeHandle& n,
     const std::string& name) {
-    double value;
-    n.getParam(name, value);
-    return value;
+	if (!n.hasParam(name)){
+		ROS_INFO("No param named%s",name.c_str());
+		return 0.0f;
+	}
+	else{
+		double value;
+    	n.getParam(name, value);
+    	return value;
+	}
+    
 }
 class PID
 {
@@ -47,6 +57,7 @@ private:
 	float m_integral;
 	float m_previousError;
 	ros::Time m_previousTime;
+	friend class Swarm_Controller;
 
 public:
 	PID(
@@ -114,125 +125,188 @@ public:
 	}
 	float pp_update(float est, float setpt)
 	{
+
 		float error = setpt - est;
 		float output = m_kpp * error;
 		return output;
 	}
-
-};
+	
+	};
 
 class Swarm_Controller
 {
 private:
 	int m_group_index;
 	int m_vehicle_num;
+	//PID m_pidX,m_pidY,m_pidZ,m_pidYaw;
 	PID m_pidX;
 	PID m_pidY;
 	PID m_pidZ;
+	PID m_pidRoll;
+	PID m_pidPitch;
 	PID m_pidYaw;
+	float m_pidx_kp;
 	int m_flight_state, m_flight_mode;
-	ros::Publisher m_outputpub;
-	ros::Subscriber m_pos_estsub,m_att_estsub, m_accsub, num_vehiclepub;
-	ros::Subscriber m_rawsub, m_possub, m_trjsub;
-	ros::Subscriber m_cmdsub;
-	ros::Subscriber num_vehiclesub;
-	ros::Time m_previousTime;
+	bool m_is_pos_original;
+	//char m_resFname[50];
 	struct M_Ctrl
 	{
-		easyfly::pos_ctrl_sp pos;
+		//easyfly::pos_ctrl_sp pos;
 		easyfly::raw_ctrl_sp raw;
 		easyfly::trj_ctrl_sp trj;
 	};
 	M_Ctrl m_ctrl;
-
-	Vector3f v_vel_sp, v_acc_sp, v_att_sp, m_pos_est, m_vel_est, m_att_est;
+	struct M_est_Vecs
+	{
+		Vector3f m_pos_est, m_vel_est, m_att_est, m_lpos, m_latt, m_cfImuAcc, m_cfImuVel, m_cfImuPos;
+	};
+	M_est_Vecs m_est_vecs;
+	struct M_sp_Vecs
+	{
+		Vector3f v_vel_sp, v_acc_sp, v_att_sp, v_posctrl_posSp, v_posctrl_velFF, v_posctrl_attSp;
+	};
+	M_sp_Vecs m_sp_vecs;
+	struct M_Pubs
+	{
+		ros::Publisher m_outputpub, m_pos_estpub;
+	};
+	M_Pubs m_pubs;
+	struct M_subs
+	{
+		ros::Subscriber m_pos_estpub, m_att_estsub, m_accsub, m_viconsub, m_yawsub;
+		ros::Subscriber m_rawsub, m_possub, m_trjsub, cfIMUsub;
+		ros::Subscriber m_cmdsub;
+	};
+	M_subs m_subs;
+	struct M_times
+	{
+		ros::Time m_previousTime, m_latt_time, m_lpos_time; 
+	};
+	M_times m_times;
 
 	easyfly::commands m_cmd;
 	easyfly::output m_output;
 	std::string tf_prefix;
-	float m_yawrate;
 
 public:
+	
 	Swarm_Controller(
 		const ros::NodeHandle& n)
-		:
-		m_pidX(
-			get(n, "PIDs/X/kp"),
-			get(n, "PIDs/X/kd"),
-			get(n, "PIDs/X/ki"),
-			get(n, "PIDs/X/kpp"),
-			get(n, "PIDs/X/ff"),
-			get(n, "PIDs/X/minOutput"),
-			get(n, "PIDs/X/maxOutput"),
-			get(n, "PIDs/X/integratorMin"),
-			get(n, "PIDs/X/integratorMax"))
+		:m_is_pos_original(true)
+		,m_cmd()
+		,m_ctrl()
+		,m_sp_vecs()
+		,m_est_vecs()
+		,m_pubs()
+		,m_subs()
+		,m_times()
+		//,m_resFname("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/")
+		,m_pidX(
+			40.0,
+			20.0,
+			2.0,
+			2.0,
+			0.6,
+			-10.0,
+			10.0,
+			-0.1,
+			0.1)
 		,m_pidY(
-			get(n, "PIDs/Y/kp"),
-			get(n, "PIDs/Y/kd"),
-			get(n, "PIDs/Y/ki"),
-			get(n, "PIDs/Y/kpp"),
-			get(n, "PIDs/Y/ff"),
-			get(n, "PIDs/Y/minOutput"),
-			get(n, "PIDs/Y/maxOutput"),
-			get(n, "PIDs/Y/integratorMin"),
-			get(n, "PIDs/Y/integratorMax"))
+			-40.0,
+			-20.0,
+			-2.0,
+			2.0,
+			0.6,
+			-10.0,
+			10.0,
+			-0.1,
+			0.1)
 		,m_pidZ(
-			get(n, "PIDs/Z/kp"),
-			get(n, "PIDs/Z/kd"),
-			get(n, "PIDs/Z/ki"),
-			get(n, "PIDs/Z/kpp"),
-			get(n, "PIDs/Z/ff"),
-			get(n, "PIDs/Z/minOutput"),
-			get(n, "PIDs/Z/maxOutput"),
-			get(n, "PIDs/Z/integratorMin"),
-			get(n, "PIDs/Z/integratorMax"))
+			5000.0,
+			6000.0,
+			3500.0,
+			2.0,
+			0.5,
+			10000.0,
+			60000.0,
+			-1000.0,
+			1000.0)
+		,m_pidRoll(
+			-200.0,
+			-20.0,
+			0.0,
+			2.0,
+			0.6,
+			-200.0,
+			200.0,
+			0.0,
+			0.0)
+		,m_pidPitch(
+			-200.0,
+			-20.0,
+			0.0,
+			2.0,
+			0.6,
+			-200.0,
+			200.0,
+			0.0,
+			0.0)
 		,m_pidYaw(
-			get(n, "PIDs/Yaw/kp"),
-			get(n, "PIDs/Yaw/kd"),
-			get(n, "PIDs/Yaw/ki"),
-			get(n, "PIDs/Yaw/kpp"),
-			get(n, "PIDs/Yaw/ff"),
-			get(n, "PIDs/Yaw/minOutput"),
-			get(n, "PIDs/Yaw/maxOutput"),
-			get(n, "PIDs/Yaw/integratorMin"),
-			get(n, "PIDs/Yaw/integratorMax"))
-		,m_previousTime(ros::Time::now())
+			-200.0,
+			-20.0,
+			0.0,
+			2.0,
+			0.6,
+			-200.0,
+			200.0,
+			0.0,
+			0.0)
 	{
 		ros::NodeHandle nh("~");//~ means private param
 		nh.getParam("group_index", m_group_index);
 
+		/*char msg_name[50];
+  		num_vehiclesub = nh.subscribe<crazyflie_driver::num_vehiclepub>("/num_vehiclepub",5,&Swarm_Controller::num_veh_Callback, this);*/
 		char msg_name[50];
-  		num_vehiclepub = nh.subscribe<crazyflie_driver::num_vehiclepub>("/num_vehiclepub",5,&Swarm_Controller::num_veh_Callback, this);
-
 		sprintf(msg_name,"/vehicle%d/output", m_group_index);
-		m_outputpub = nh.advertise<easyfly::output>(msg_name, 1);
+		m_pubs.m_outputpub = nh.advertise<easyfly::output>(msg_name, 5);
 
-		sprintf(msg_name,"/vehicle%d/pos_est",m_group_index);
-		m_pos_estsub = nh.subscribe<easyfly::pos_est>(msg_name,5,&Swarm_Controller::posEstCallback, this);
+		sprintf(msg_name,"/vehicle%d/pos_est", m_group_index); 
+		m_pubs.m_pos_estpub = nh.advertise<easyfly::pos_est>(msg_name, 5);
 
-		sprintf(msg_name,"/vehicle%d/att_est",m_group_index);
-		m_att_estsub = nh.subscribe<easyfly::att_est>(msg_name,5,&Swarm_Controller::attEstCallback, this);
+		//sprintf(msg_name,"/vicon/crazyflie%d/whole",m_group_index);
+		m_subs.m_viconsub = nh.subscribe<geometry_msgs::TransformStamped>("/vicon/one_cf/cf",5,&Swarm_Controller::vicon_Callback, this);
+
+		//attitude estimation
+		sprintf(msg_name,"/vehicle%d/yaw_est",m_group_index);
+		m_subs.m_yawsub = nh.subscribe<crazyflie_driver::Yaw_est>(msg_name,5,&Swarm_Controller::att_estCallback, this);
 		
 		sprintf(msg_name,"/vehicle%d/raw_ctrl_sp",m_group_index);
-		m_rawsub = nh.subscribe<easyfly::raw_ctrl_sp>(msg_name,5,&Swarm_Controller::rawctrlCallback, this);
+		m_subs.m_rawsub = nh.subscribe<easyfly::raw_ctrl_sp>(msg_name,5,&Swarm_Controller::rawctrlCallback, this);
+
+		sprintf(msg_name,"/vehicle%d/tf_prefix",m_group_index);
+		m_subs.cfIMUsub = nh.subscribe<sensor_msgs::Imu>(msg_name,5,&Swarm_Controller::cfIMUCallback, this);
 
 		sprintf(msg_name,"/vehicle%d/pos_ctrl_sp",m_group_index);
-		m_possub = nh.subscribe<easyfly::pos_ctrl_sp>(msg_name,5,&Swarm_Controller::posctrlCallback, this);
+		m_subs.m_possub = nh.subscribe<easyfly::pos_ctrl_sp>(msg_name,5,&Swarm_Controller::posctrlCallback, this);
 
 		sprintf(msg_name,"/vehicle%d/trj_ctrl_sp",m_group_index);
-		m_trjsub = nh.subscribe<easyfly::trj_ctrl_sp>(msg_name,5,&Swarm_Controller::trjctrlCallback, this);
+		m_subs.m_trjsub = nh.subscribe<easyfly::trj_ctrl_sp>(msg_name,5,&Swarm_Controller::trjctrlCallback, this);
 		
-		m_cmdsub = nh.subscribe<easyfly::commands>("commands",5,&Swarm_Controller::cmdCallback, this);
+		m_subs.m_cmdsub = nh.subscribe<easyfly::commands>("/commands",5,&Swarm_Controller::cmdCallback, this);
+		
 	}
+
 	void run(double frequency)
 	{
 		ros::NodeHandle node;
 		node.getParam("/flight_mode", m_flight_mode);
+		
 		ros::Timer timer = node.createTimer(ros::Duration(1.0/frequency), &Swarm_Controller::iteration, this);
 		ros::spin();
 	}
 	void iteration(const ros::TimerEvent& e)
-	{
+	{					
 		static float time_elapse = 0;
 		float dt = e.current_real.toSec() - e.last_real.toSec();
 		time_elapse += dt;
@@ -241,7 +315,7 @@ public:
 			m_output.att_sp.y = 0;
 			m_output.att_sp.z = 0;
 			m_output.throttle = 0;
-			m_outputpub.publish(m_output);
+			m_pubs.m_outputpub.publish(m_output);
 		}
 		else{
 			switch(m_flight_mode){
@@ -251,31 +325,40 @@ public:
 					m_output.att_sp.y = m_ctrl.raw.raw_att_sp.y;
 					m_output.att_sp.z = m_ctrl.raw.raw_att_sp.z;
 					m_output.throttle = m_ctrl.raw.throttle;
-					m_outputpub.publish(m_output);
-				}
+					m_pubs.m_outputpub.publish(m_output);
+				}//case MODE_RAW
 				break;
 				case MODE_POS:{
-					v_vel_sp(0) = m_pidX.pp_update(m_pos_est(0), m_ctrl.pos.pos_sp.x);
-					v_vel_sp(1) = m_pidY.pp_update(m_pos_est(1), m_ctrl.pos.pos_sp.y);
-					v_vel_sp(2) = m_pidZ.pp_update(m_pos_est(2), m_ctrl.pos.pos_sp.z);
-					v_vel_sp(0) += m_ctrl.pos.vel_ff.x * m_pidX.ff();
-					v_vel_sp(1) += m_ctrl.pos.vel_ff.y * m_pidY.ff();
-					v_vel_sp(2) += m_ctrl.pos.vel_ff.z * m_pidZ.ff();
-					v_acc_sp(0) = m_pidX.pid_update(m_vel_est(0), v_vel_sp(0));
-					v_acc_sp(1) = m_pidY.pid_update(m_vel_est(1), v_vel_sp(1));
-					v_acc_sp(2) = m_pidZ.pid_update(m_vel_est(2), v_vel_sp(2));
-					v_acc_sp(2) += (float)GRAVITY / 1000.0;
 
-					//PRY control
-					v_att_sp(0) = m_pidYaw.pp_update(m_att_est(0), m_ctrl.pos.pitch_sp);
-					v_att_sp(1) = m_pidYaw.pp_update(m_att_est(1), m_ctrl.pos.roll_sp);
-					v_att_sp(2) = m_pidYaw.pp_update(m_att_est(2), m_ctrl.pos.yaw_sp);
+					if(m_cmd.flight_state!=Idle){
+					m_sp_vecs.v_vel_sp(0) = m_pidX.pp_update((m_est_vecs.m_pos_est)(0), (m_sp_vecs.v_posctrl_posSp)(0));
+					m_sp_vecs.v_vel_sp(1) = m_pidY.pp_update((m_est_vecs.m_pos_est)(1), (m_sp_vecs.v_posctrl_posSp)(1));
+					m_sp_vecs.v_vel_sp(2) = m_pidZ.pp_update((m_est_vecs.m_pos_est)(2), (m_sp_vecs.v_posctrl_posSp)(2));
 
-					float thrust_force = v_acc_sp.norm() * (float)VEHICLE_MASS / 1000.0;
-					/*Vector3f body_z_sp = v_acc_sp / v_acc_sp.norm();
+					m_sp_vecs.v_vel_sp(0) += (m_sp_vecs.v_posctrl_velFF)(0) * m_pidX.ff();
+					m_sp_vecs.v_vel_sp(1) += (m_sp_vecs.v_posctrl_velFF)(1) * m_pidY.ff();
+					m_sp_vecs.v_vel_sp(2) += (m_sp_vecs.v_posctrl_velFF)(2) * m_pidZ.ff();
+
+					m_sp_vecs.v_acc_sp(0) = m_pidX.pid_update((m_est_vecs.m_vel_est)(0), (m_sp_vecs.v_vel_sp)(0));
+					m_sp_vecs.v_acc_sp(1) = m_pidY.pid_update((m_est_vecs.m_vel_est)(1), (m_sp_vecs.v_vel_sp)(1));
+					m_sp_vecs.v_acc_sp(2) = m_pidZ.pid_update((m_est_vecs.m_vel_est)(2), (m_sp_vecs.v_vel_sp)(2));
+
+					m_sp_vecs.v_acc_sp(0) = m_pidX.pp_update((m_est_vecs.m_cfImuAcc)(0), (m_sp_vecs.v_acc_sp)(0));
+					m_sp_vecs.v_acc_sp(1) = m_pidX.pp_update((m_est_vecs.m_cfImuAcc)(1), (m_sp_vecs.v_acc_sp)(1));
+					m_sp_vecs.v_acc_sp(2) = m_pidX.pp_update((m_est_vecs.m_cfImuAcc)(2), (m_sp_vecs.v_acc_sp)(2));
+
+					m_sp_vecs.v_acc_sp(2) += (float)GRAVITY / 1000.0;
+
+					
+					//float thrust_force = v_acc_sp.norm() * (float)VEHICLE_MASS / 1000.0;
+
+					float thrust_force = m_sp_vecs.v_acc_sp.norm() * (float)VEHICLE_MASS / 2000.0;
+					//printf("THRUST-FORCE: %f\n", thrust_force);
+					//float thrust_force =2.0f;
+					/*Vector3f body_z_sp = m_sp_vecs.v_acc_sp / m_sp_vecs.v_acc_sp.norm();
 					Vector3f y_c;
-					y_c(0) = -sin(m_ctrl.pos.yaw_sp);
-					y_c(1) = cos(m_ctrl.pos.yaw_sp);
+					y_c(0) = -sin((m_sp_vecs.v_posctrl_attSp)(2));
+					y_c(1) = cos((m_sp_vecs.v_posctrl_attSp)(2));
 					y_c(2) = 0;
 					Vector3f body_x_sp = y_c.cross(body_z_sp);
 					body_x_sp = body_x_sp / body_x_sp.norm();
@@ -286,16 +369,25 @@ public:
 						R_sp[i][1] = body_y_sp(i);
 						R_sp[i][2] = body_z_sp(i);
 					}
-					m_output.att_sp.x = atan2(R_sp[2][1], R_sp[2][2]);
-					m_output.att_sp.y = -asin(R_sp[2][0]);
-					m_output.att_sp.z = m_pidYaw.pp_update(m_est.yaw_est, m_ctrl.pos.yaw_sp);*/
-					m_output.att_sp.x = v_att_sp(0);
-					m_output.att_sp.y = v_att_sp(1);
-					m_output.att_sp.z = v_att_sp(2);
-					m_output.throttle = thrust_force * 1000.0 / MAX_THRUST;
 					
-					m_outputpub.publish(m_output);
-				}
+					m_output.att_sp.x = atan2(R_sp[2][1], R_sp[2][2]);
+					m_output.att_sp.y = -asin(R_sp[2][0]);*/
+					/*(m_sp_vecs.v_att_sp)(0) = atan2(R_sp[2][1], R_sp[2][2]);
+					(m_sp_vecs.v_att_sp)(1) = -asin(R_sp[2][0]);*/
+
+					//PRY control
+					m_output.att_sp.x = m_pidRoll.pp_update((m_est_vecs.m_att_est)(0), (m_sp_vecs.v_posctrl_attSp)(0));
+					m_output.att_sp.y = m_pidPitch.pp_update((m_est_vecs.m_att_est)(1), (m_sp_vecs.v_posctrl_attSp)(1));
+					m_output.att_sp.z = m_pidYaw.pp_update((m_est_vecs.m_att_est)(2), (m_sp_vecs.v_posctrl_attSp)(2));
+					
+					/*m_output.att_sp.x = v_att_sp(0);
+					m_output.att_sp.y = v_att_sp(1);
+					m_output.att_sp.z = v_att_sp(2);*/
+					m_output.throttle = thrust_force * 1000.0 / MAX_THRUST;
+					//printf("OUTPUT:  %f, %f, %f, %f\n", m_output.att_sp.x,m_output.att_sp.y,m_output.att_sp.z,m_output.throttle);
+					m_pubs.m_outputpub.publish(m_output);
+				}//if flight_mode!=Idle
+			}//case MODE_POS
 				break;
 				case MODE_TRJ:{
 					
@@ -307,28 +399,81 @@ public:
 		}//end if cut
 	}
 
-	void num_veh_Callback(const crazyflie_driver::num_vehiclepub::ConstPtr& msg)
+	void cfIMUCallback(const sensor_msgs::Imu::ConstPtr& msg)
 	{
-		m_vehicle_num = msg->g_vehicle_num;
-	}
-	void posEstCallback(const easyfly::pos_est::ConstPtr& est)
+		(m_est_vecs.m_cfImuAcc)(0)=msg->linear_acceleration.x;
+		(m_est_vecs.m_cfImuAcc)(1)=msg->linear_acceleration.y;
+		(m_est_vecs.m_cfImuAcc)(2)=msg->linear_acceleration.z;
+		//TODO: low pass filter
+		(m_est_vecs.m_cfImuVel)(0)=itergrate_update((m_est_vecs.m_cfImuAcc)(0));
+		(m_est_vecs.m_cfImuVel)(1)=itergrate_update((m_est_vecs.m_cfImuAcc)(1));
+		(m_est_vecs.m_cfImuVel)(2)=itergrate_update((m_est_vecs.m_cfImuAcc)(2));
+
+		(m_est_vecs.m_vel_est)(0) = ((m_est_vecs.m_cfImuVel)(0)+(m_est_vecs.m_vel_est)(0))/2.0f;
+		(m_est_vecs.m_vel_est)(1) = ((m_est_vecs.m_cfImuVel)(1)+(m_est_vecs.m_vel_est)(1))/2.0f;
+		(m_est_vecs.m_vel_est)(2) = ((m_est_vecs.m_cfImuVel)(2)+(m_est_vecs.m_vel_est)(2))/2.0f;
+
+		(m_est_vecs.m_cfImuPos)(0)=itergrate_update((m_est_vecs.m_cfImuVel)(0));
+		(m_est_vecs.m_cfImuPos)(1)=itergrate_update((m_est_vecs.m_cfImuVel)(1));
+		(m_est_vecs.m_cfImuPos)(2)=itergrate_update((m_est_vecs.m_cfImuVel)(2));
+
+		(m_est_vecs.m_pos_est)(0) = ((m_est_vecs.m_pos_est)(0) + (m_est_vecs.m_cfImuPos)(0))/2.0f;
+		(m_est_vecs.m_pos_est)(1) = ((m_est_vecs.m_pos_est)(1) + (m_est_vecs.m_cfImuPos)(1))/2.0f;
+		(m_est_vecs.m_pos_est)(2) = ((m_est_vecs.m_pos_est)(2) + (m_est_vecs.m_cfImuPos)(2))/2.0f;
+
+		}
+
+	void vicon_Callback(const geometry_msgs::TransformStamped::ConstPtr& msg)
 	{
+		
+		if(m_is_pos_original)
+		{
+			printf("HELLO, VICON!!!\n");
+			(m_est_vecs.m_lpos)(0) = msg->transform.translation.x;
+			(m_est_vecs.m_lpos)(1) = msg->transform.translation.y;
+			(m_est_vecs.m_lpos)(2) = msg->transform.translation.z;
+			ros::Time rightnow = ros::Time::now();
+			m_times.m_lpos_time = rightnow;
+			m_is_pos_original = false;
+		}
+		else
+		{	easyfly::pos_est posmsg;
+			//printf("m_is_pos_original: %d\n",m_is_pos_original );
+			ros::Time rightnow = ros::Time::now();
+			double dt = rightnow.toSec() - m_times.m_lpos_time.toSec();
+			m_times.m_lpos_time = rightnow;
+	
+			(m_est_vecs.m_pos_est)(0) = msg->transform.translation.x;		
+			(m_est_vecs.m_pos_est)(1) = msg->transform.translation.y;
+			(m_est_vecs.m_pos_est)(2) = msg->transform.translation.z;
 
-		m_pos_est(0) = est->pos_est.x;
-		m_pos_est(1) = est->pos_est.y;
-		m_pos_est(2) = est->pos_est.z;
-
-		m_vel_est(0) = est->vel_est.x;
-		m_vel_est(1) = est->vel_est.y;
-		m_vel_est(2) = est->vel_est.z;
+			posmsg.pos_est.x = (m_est_vecs.m_pos_est)(0);
+			posmsg.pos_est.y = (m_est_vecs.m_pos_est)(1);
+			posmsg.pos_est.z = (m_est_vecs.m_pos_est)(2);
+			
+			(m_est_vecs.m_vel_est)(0) = ((m_est_vecs.m_pos_est)(0) - (m_est_vecs.m_lpos)(0))/dt;
+			(m_est_vecs.m_vel_est)(1) = ((m_est_vecs.m_pos_est)(1) - (m_est_vecs.m_lpos)(1))/dt;
+			(m_est_vecs.m_vel_est)(2) = ((m_est_vecs.m_pos_est)(2) - (m_est_vecs.m_lpos)(2))/dt;
+			posmsg.vel_est.x = (m_est_vecs.m_vel_est)(0);
+			posmsg.vel_est.y = (m_est_vecs.m_vel_est)(1);
+			posmsg.vel_est.z = (m_est_vecs.m_vel_est)(2);
+	
+			m_pubs.m_pos_estpub.publish(posmsg);
+			(m_est_vecs.m_lpos)(0)=(m_est_vecs.m_pos_est)(0);
+			(m_est_vecs.m_lpos)(1)=(m_est_vecs.m_pos_est)(1);
+			(m_est_vecs.m_lpos)(2)=(m_est_vecs.m_pos_est)(2);
+			writeData_bin("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/pos_est_Vicon.dat",m_est_vecs.m_pos_est);
+			writeData_bin("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/vel_est_Vicon.dat",m_est_vecs.m_vel_est);
+		}
 	}
-	void attEstCallback(const easyfly::att_est::ConstPtr& est)
+
+	void att_estCallback(const crazyflie_driver::Yaw_est::ConstPtr& est)
 	{	
-
-		m_att_est(0) = est->att_est.x;
-		m_att_est(1) = est->att_est.y;
-		m_att_est(2) = est->att_est.z;
-		//m_att_est.yawrate_est = est->yawrate_est;
+		(m_est_vecs.m_att_est)(0) = est->Roll_est;
+		(m_est_vecs.m_att_est)(1) = est->Pitch_est;
+		(m_est_vecs.m_att_est)(2) = est->Yaw_est;
+		writeData_bin("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/att_est.dat",m_est_vecs.m_att_est);
+		
 	}
 
 	void rawctrlCallback(const easyfly::raw_ctrl_sp::ConstPtr& ctrl)
@@ -340,20 +485,25 @@ public:
 	}
 	void posctrlCallback(const easyfly::pos_ctrl_sp::ConstPtr& ctrl)
 	{
-		m_ctrl.pos.pos_sp.x = ctrl->pos_sp.x;
-		m_ctrl.pos.pos_sp.y = ctrl->pos_sp.y;
-		m_ctrl.pos.pos_sp.z = ctrl->pos_sp.z;
-		m_ctrl.pos.vel_ff.x = ctrl->vel_ff.x;
-		m_ctrl.pos.vel_ff.y = ctrl->vel_ff.y;
-		m_ctrl.pos.vel_ff.z = ctrl->vel_ff.z;
-		m_ctrl.pos.yaw_sp = ctrl->yaw_sp;
-		m_ctrl.pos.pitch_sp = ctrl->pitch_sp;
-		m_ctrl.pos.roll_sp = ctrl->roll_sp;
+		(m_sp_vecs.v_posctrl_posSp)(0) = ctrl->pos_sp.x;
+		(m_sp_vecs.v_posctrl_posSp)(1) = ctrl->pos_sp.y;
+		(m_sp_vecs.v_posctrl_posSp)(2) = ctrl->pos_sp.z;
 
+		(m_sp_vecs.v_posctrl_velFF)(0) = ctrl->vel_ff.x;
+		(m_sp_vecs.v_posctrl_velFF)(1) = ctrl->vel_ff.y;
+		(m_sp_vecs.v_posctrl_velFF)(2) = ctrl->vel_ff.z;
+
+		(m_sp_vecs.v_posctrl_attSp)(0) = ctrl->roll_sp;
+		(m_sp_vecs.v_posctrl_attSp)(1) = ctrl->pitch_sp;
+		(m_sp_vecs.v_posctrl_attSp)(2) = ctrl->yaw_sp;
+		
+		writeData_bin("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/pos_ctrl.dat",m_sp_vecs.v_posctrl_posSp);
+		writeData_bin("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/velff_ctrl.dat",m_sp_vecs.v_posctrl_velFF);
+		writeData_bin("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/att_ctrl.dat",m_sp_vecs.v_posctrl_attSp);
 	}
 	void trjctrlCallback(const easyfly::trj_ctrl_sp::ConstPtr& ctrl)
-	{
-		
+	{	
+
 	}
 	void cmdCallback(const easyfly::commands::ConstPtr& cmd)
 	{
@@ -361,15 +511,31 @@ public:
 		m_cmd.l_flight_state = cmd->l_flight_state;
 		m_cmd.cut = cmd->cut;
 	}
+	float itergrate_update(float control_goal)
+	{
+		float goal_integrated;
+		ros::Time time = ros::Time::now();
+		float dt = time.toSec() - m_times.m_previousTime.toSec();
+		goal_integrated = control_goal*dt;
+		return goal_integrated;
+	}
+	void writeData_bin(const char* fname, Vector3f vec)//, int num_Data)
+	{	
+		FILE* file_ptr;
+		file_ptr = fopen(fname,"ab");
+		if( file_ptr == NULL){
+			file_ptr = fopen(fname,"wb");
+		}
+		char inputf[50];
+		sprintf(inputf,"%f %f %f\n",vec(0),vec(1),vec(2));
+		fputs (inputf,file_ptr);
+		fclose (file_ptr);
+	}
 
 };
 int main(int argc, char **argv)
 {
-//  int ret = init_scan(argc, argv);
-	/*char indexc = *argv[1];
-	int index = indexc;*/
 	char node_name[50];
-	//sprintf(node_name, "Swarm_Controller", index);
 	ros::init(argc, argv, "Swarm_Controller");
 	ros::NodeHandle n("~");
 	n.getParam("/joy_num", g_joy_num);
