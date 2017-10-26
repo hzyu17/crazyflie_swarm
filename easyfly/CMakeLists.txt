@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   crazyflie_cpp
   geometry_msgs
   message_generation
+  vicon_bridge
   genmsg
 )
 add_message_files(
@@ -41,11 +42,12 @@ find_package(Boost REQUIRED COMPONENTS
 
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES easyfly
-#  CATKIN_DEPENDS roscpp rospy std_msgs
+#  LIBRARIES easyfly vicon_bridge
+#  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs vicon_bridge
 #  DEPENDS system_lib
   CATKIN_DEPENDS
   message_runtime
+  vicon_bridge
   crazyflie_cpp
 )
 
@@ -56,13 +58,22 @@ catkin_package(
 include_directories(
   ${catkin_INCLUDE_DIRS}
 
- -isystem /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/Eigen 
+  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include 
 )
+
 
 add_executable(fly
   src/fly.cpp
 )
 target_link_libraries(fly
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+
+add_executable(commander_test
+  src/test.cpp
+)
+target_link_libraries(commander_test
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
 )
@@ -80,6 +91,7 @@ add_executable(swarm_controller
 target_link_libraries(swarm_controller
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
+   /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
 )
 add_executable(swarm_linker
   src/swarm_linker.cpp
@@ -105,15 +117,6 @@ target_link_libraries(joysticks2
   ${Boost_LIBRARIES}
 )
 
-add_executable(controller
-  src/controller.cpp
-)
-target_link_libraries(controller
-  ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
-)
-
-
 add_executable(xbee_linker
   src/xbee_linker.cpp
 )
@@ -129,3 +132,4 @@ target_link_libraries(xbee_linker2
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
 )
+
