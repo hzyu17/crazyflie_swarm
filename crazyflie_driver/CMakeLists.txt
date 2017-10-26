@@ -42,7 +42,7 @@ add_message_files(
   FILES
   LogBlock.msg
   GenericLogData.msg
-  Yaw_est.msg
+  Att_est.msg
   num_vehiclepub.msg
 )
 
@@ -50,6 +50,7 @@ add_message_files(
 generate_messages(
   DEPENDENCIES
    std_msgs
+   geometry_msgs
 )
 
 ###################################
@@ -79,7 +80,9 @@ catkin_package(
 
 include_directories(
   ${catkin_INCLUDE_DIRS}
+  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include
 )
+
 
 ## Declare a cpp executable
 add_executable(crazyflie_server
@@ -95,6 +98,8 @@ add_dependencies(crazyflie_server
 ## Specify libraries to link a library or executable target against
 target_link_libraries(crazyflie_server
   ${catkin_LIBRARIES}
+  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
+
 )
 
 ## Declare a cpp executable
@@ -109,6 +114,7 @@ add_dependencies(crazyflie_add
 target_link_libraries(crazyflie_add
   ${catkin_LIBRARIES}
 )
+
 
 #############
 ## Install ##
