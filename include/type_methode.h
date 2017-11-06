@@ -47,4 +47,8 @@ void vec3f_derivative(Vector3f* Deriv, Vector3f* Origin, Vector3f* l_Origin, flo
 float degToRad(float deg);
 
 float radToDeg(float deg);
+
+void writeData_bin(const char* fname, Vector3f* vec);
+
+void writeData_binf(const char* fname, float number);
 #endif

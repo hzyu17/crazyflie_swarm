@@ -21,7 +21,7 @@ struct M_est_Vecs{
 };
 
 struct M_sp_Vecs{
-		Vector3f v_posctrl_posSp;
+		Vector4f v_posctrl_posSp;
 		//Vector3f v_vel_sp, v_acc_sp, v_att_sp, v_posctrl_velFF;
 		//Vector3f v_lposSp, v_lvelSp;
 	};

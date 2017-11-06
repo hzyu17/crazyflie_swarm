@@ -69,6 +69,7 @@ public:
 	{
 		/*ros::Time time = ros::Time::now();
 		float dt = time.toSec() - m_previousTime.toSec();*/
+		
 		float error = setpt - est;
 		m_integral += error * dt;
 		m_integral = std::max(std::min(m_integral, m_integratorMax), m_integratorMin);

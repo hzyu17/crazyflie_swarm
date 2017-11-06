@@ -6,7 +6,6 @@ int dead_zone(int a, int b);
 float constrain_f(float a, float b, float c);
 float dead_zone_f(float a, float b);
 
-
 #define GRAVITY 9810
 #define VEHICLE_MASS 30
 #define MAX_THRUST 100 //grams
