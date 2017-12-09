@@ -16,13 +16,21 @@ float inv_sqrt(float x)
 	y = y * (1.5f - (halfx * y * y));
 	return y;
 }
+float deriv_f(const	float f_now, const float f_past , const float dt)
+{
+	return (f_now - f_past)/dt;
+}
 void vec3f_normalize(Vector3f* v)
 {
+	if((*v)(0)==0&&(*v)(1)==0&&(*v)(2)==0)
+	{}
+	else{
 	float inv_norm;
-	inv_norm = inv_sqrt((*v)(0) * (*v)(0) + (*v)(1) * (*v)(1) + (*v)(2) * (*v)(2));
-	(*v)(0) *= inv_norm;
-	(*v)(1) *= inv_norm;
-	(*v)(2) *= inv_norm;
+	inv_norm = sqrtf((*v)(0) * (*v)(0) + (*v)(1) * (*v)(1) + (*v)(2) * (*v)(2));
+	(*v)(0) /= inv_norm;
+	(*v)(1) /= inv_norm;
+	(*v)(2) /= inv_norm;
+	}
 }
 void vec3f_cross(const Vector3f* a, const Vector3f* b, Vector3f* d)
 {
@@ -43,10 +51,10 @@ float vec3f_dot(const Vector3f* a, const Vector3f* b)
 void vec3f_passnorm(const Vector3f* v, Vector3f* vec_des)
 {
 	float inv_norm;
-	inv_norm = inv_sqrt((*v)(0) * (*v)(0) + (*v)(1) * (*v)(1) + (*v)(2) * (*v)(2));
-	(*vec_des)(0) = (*v)(0) * inv_norm;
-	(*vec_des)(1) = (*v)(1) * inv_norm;
-	(*vec_des)(2) = (*v)(2) * inv_norm;
+	inv_norm = sqrtf((*v)(0) * (*v)(0) + (*v)(1) * (*v)(1) + (*v)(2) * (*v)(2));
+	(*vec_des)(0) = (*v)(0) / inv_norm;
+	(*vec_des)(1) = (*v)(1) / inv_norm;
+	(*vec_des)(2) = (*v)(2) / inv_norm;
 }
 
 void vec3f_integration(Vector3f* Integrated, Vector3f* Origin, float dt)
@@ -58,9 +66,10 @@ void vec3f_integration(Vector3f* Integrated, Vector3f* Origin, float dt)
 
 void vec3f_derivative(Vector3f* Deriv, Vector3f* Origin, Vector3f* l_Origin, float dt)
 {
-		(*Deriv)(0) += ((*Origin)(0) - (*l_Origin)(0))*dt;
-		(*Deriv)(1) += ((*Origin)(1) - (*l_Origin)(1))*dt;
-		(*Deriv)(2) += ((*Origin)(2) - (*l_Origin)(2))*dt;
+		(*Deriv)(0) = ((*Origin)(0) - (*l_Origin)(0))/dt;
+		(*Deriv)(1) = ((*Origin)(1) - (*l_Origin)(1))/dt;
+		(*Deriv)(2) = ((*Origin)(2) - (*l_Origin)(2))/dt;
+
 }
 
 float vec3f_length(const Vector3f* v)
@@ -108,7 +117,7 @@ void euler2rotation(const Vector3f* Euler, Matrix3f* R)
 	float sy = sin((*Euler)(2));
 	float cy = cos((*Euler)(2));
 	(*R)(0,0) = cp * cy;
-	(*R)(0,1) = ((sr * sp * cy) - (cr * sy));
+	(*R)(0,1) = -((sr * sp * cy) - (cr * sy));
 	(*R)(0,2) = ((cr * sp * cy) + (sr * sy));
 	(*R)(1,0) = cp * sy;
 	(*R)(1,1) = ((sr * sp * sy) + (cr * cy));
@@ -132,7 +141,7 @@ void quaternion2rotation(const Vector4f* Q, Matrix3f* R)
 	(*R)(1,2)=(q2 * q3 - q0 * q1) * 2.0f;
 	(*R)(2,0)=(q1 * q3 - q0 * q2) * 2.0f;
 	(*R)(2,1)=(q2 * q3 + q0 * q1) * 2.0f;
-	(*R)(2,2)=1.0f - ((q1 * q1 + q2 * q2) * 2.0f);
+	(*R)(2,2)=1.0f - ((q1 * q1 + q2 * q2) * 2.0f);  
 }
 
 void euler2quaternion(const Vector3f* Euler, Vector4f* Q)
@@ -226,16 +235,17 @@ void quaternion_normalize(Vector4f* Q)
 	q1 = (*Q)(1);
 	q2 = (*Q)(2);
 	q3 = (*Q)(3);
-	inv_norm = inv_sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-	q0 *= inv_norm;
-	q1 *= inv_norm;
-	q2 *= inv_norm;
-	q3 *= inv_norm;
+	float norm = sqrtf(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+	q0 /= norm;
+	q1 /= norm;
+	q2 /= norm;
+	q3 /= norm;
 	(*Q)(0) = q0;
 	(*Q)(1) = q1;
 	(*Q)(2) = q2;
 	(*Q)(3) = q3;
 }
+
 
 /*void resetM_Qdot2Q(const Vector3f* gyro, Matrix4f* M_Qdot2Q)
 {
@@ -255,4 +265,36 @@ float degToRad(float deg) {
 
 float radToDeg(float rad) {
     return rad * 180.0f / M_PI;
+}
+void writeData_bin(const char* fname, Vector3f* vec)//, int num_Data)
+{	
+	//rename
+	/*char fname[250];
+	sprintf(fname,"%s%s",m_resFnameRoot,fname_input);*/
+	//create file
+	FILE* file_ptr;
+	file_ptr = fopen(fname,"ab");
+	if( file_ptr == NULL){
+		file_ptr = fopen(fname,"wb");
+	}
+	char inputf[50];
+	sprintf(inputf,"%f  %f  %f\n",(*vec)(0),(*vec)(1),(*vec)(2));
+	fputs (inputf,file_ptr);
+	fclose (file_ptr);
+}
+void writeData_binf(const char* fname, float number)
+{	
+	//rename
+	/*char fname[250];
+	sprintf(fname,"%s%s",m_resFnameRoot,fname_input);*/
+	//create file
+	FILE* file_ptr;
+	file_ptr = fopen(fname,"ab");
+	if( file_ptr == NULL){
+		file_ptr = fopen(fname,"wb");
+	}
+	char inputf[50];
+	sprintf(inputf,"%f\n",number);
+	fputs (inputf,file_ptr);
+	fclose (file_ptr);
 }
