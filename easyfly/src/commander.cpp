@@ -15,20 +15,29 @@
 #include <easyfly/trj_ctrl_sp.h>
 #include <easyfly/pos_est.h>	
 #include <easyfly/Att_est.h>
+#include <vicon_bridge/Markers.h>
+#include <vicon_bridge/Marker.h>
 #include "commons.h"
 #include "Eigen/Eigen/Eigen"
 #include "Eigen/Eigen/Geometry"
 #include "type_methode.h"
-int g_vehicle_num=1;
+#include "gl_declair.h"
+
+int g_vehicle_num=2;
 int g_joy_num=1;
 using namespace Eigen;
+using namespace std;
+#define _USE_MATH_DEFINES //PI
 
 class Commander
 {
 private:
-	std::vector<ros::Publisher> m_rawpub_v, m_pospub_v, m_trjpub_v;
+	std::vector<ros::Publisher> m_rawpub_v, m_pospub_v, m_trjpub_v, m_pos_est_v;
 	ros::Publisher m_cmdpub;
+	ros::Subscriber m_viconMarkersub;
 	std::vector<ros::Subscriber> m_joysub_v, m_estsub_v, m_estyawsub_v;
+	std::vector<vicon_bridge::Marker> m_markers;
+
 	bool takeoff_switch;
 	bool takeoff_condition;
 	float takeoff_objective_height;
@@ -37,17 +46,19 @@ private:
 	float takeoff_high_rate;
 	float m_landspeed;
 	float m_landsafe;
+	std::vector<float> m_thetaPos, m_radius_Pos;
 	float _dt_deriv;
 	int m_flight_mode;
-	bool reset_takeoff;
+	bool reset_takeoff,isFirstVicon;
 	float m_takeoff_switch_Auto;
 	float m_takeoff_switch_Hover;
 	float m_land_switch_idle;
-	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt;
+	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt, isFirstCircling;
 	//MODE_RAW 0
 	//MODE_POS 1
 	//MODE_TRJ 2
 	int m_flight_state;
+	int m_hovering_numb;
 //	float m_velff_xy_P, m_velff_z_P;
 	struct M_Joy
 	{
@@ -67,9 +78,11 @@ private:
 	std::vector<M_Ctrl> m_ctrl_v;
 	std::vector<easyfly::pos_est> m_est_v;
 	std::vector<Vector3f> m_att_est_v;
+	std::vector<Vector3f> swarm_pos;
 	easyfly::commands m_cmd_msg;
-	Vector3f _takeoff_Pos;
+	std::vector<Vector3f> _takeoff_Pos;
 	Vector3f m_vel_ff, m_acc_sp,  m_last_rateSp;
+	easyfly::pos_est m_pos_estmsg;
 
 public:
 	Commander(ros::NodeHandle& nh)
@@ -83,27 +96,33 @@ public:
 	,m_ctrl_v(g_vehicle_num)
 	,m_est_v(g_vehicle_num)
 	,m_att_est_v(g_vehicle_num)
+	,m_pos_est_v(g_vehicle_num)
+	,swarm_pos(0)
 	,m_cmd_msg()
 	,takeoff_switch(false)
 	,takeoff_condition(true)
 	,isGotAtt(false)
+	,isFirstVicon(true)
 	,isGotPos(false)
 	,isFirstPos(true)
 	,isFirsrAtt(true)
+	,isFirstCircling(true)
 	,takeoff_objective_height(1.2f)
 	,takeoff_safe_distance(0.0f)
 	,takeoff_low_rate(0.2f)
 	,takeoff_high_rate(0.3f)
 	,reset_takeoff(false)
 	,m_landspeed(0.2f)
+	,m_thetaPos(0)
 	,m_land_switch_idle(0.1f)
 	,m_takeoff_switch_Auto(0.2f)
 	,m_takeoff_switch_Hover(0.2f)
+	,m_hovering_numb(0)
 	
 	{
 		m_vel_ff.setZero();
 		m_acc_sp.setZero();
-		_takeoff_Pos.setZero();
+		//_takeoff_Pos.setZero();
 		m_last_rateSp.setZero();
 		m_flight_state = Idle;
 //		m_velff_xy_P = 0.6;
@@ -122,8 +141,11 @@ public:
 			m_trjpub_v[i] = nh.advertise<easyfly::trj_ctrl_sp>(msg_name, 1);
 			sprintf(msg_name,"/vehicle%d/att_est",i);
 			m_estyawsub_v[i] = nh.subscribe<easyfly::Att_est>(msg_name,5,boost::bind(&Commander::att_estCallback, this, _1, i));
-			sprintf(msg_name,"/vehicle%d/pos_est",i);
-			m_estsub_v[i] = nh.subscribe<easyfly::pos_est>(msg_name,5,boost::bind(&Commander::pos_estCallback, this, _1, i));
+
+			m_viconMarkersub = nh.subscribe<vicon_bridge::Markers>("/vicon/markers",5,&Commander::vicon_markerCallback, this);
+
+			sprintf(msg_name,"/vehicle%d/pos_est", i); 
+			m_pos_est_v[i] = nh.advertise<easyfly::pos_est>(msg_name, 5);
 		}
 		for(int i=0;i<g_joy_num;i++){
 			sprintf(msg_name,"/joygroup%d/joy",i);
@@ -154,9 +176,10 @@ public:
 		if(m_joy_v[0].curr_buttons[4] == 1 && m_joy_v[0].curr_buttons[5] == 1){
 			m_cmd_msg.cut = 1;
 		}
-		else{	
+		else{
 			switch(m_flight_mode){
 				case MODE_RAW:{
+					
 					for(int i=0; i<g_vehicle_num;i++){
 						m_ctrl_v[i].rawctrl_msg.raw_att_sp.x = -m_joy_v[0].axes[0] * 30 * DEG2RAD;//+-1
 						m_ctrl_v[i].rawctrl_msg.raw_att_sp.y = m_joy_v[0].axes[1] * 30 * DEG2RAD;
@@ -221,6 +244,7 @@ public:
 						break;
 						case TakingOff:{
 							//printf("%d  %d\n",isGotPos, isGotAtt);
+							
 							if(isGotPos && isGotAtt){
 								for(int i=0;i<g_vehicle_num;i++){
 									command_takeoff(i,_dt_deriv);
@@ -230,35 +254,62 @@ public:
 							}
 							//TODO judge if it is time to get into Automatic
 						}
-							
 						}
 						break;
 						case Landing:{
 							for(int i=0;i<g_vehicle_num;i++){
 								control_landing(i, _dt_deriv);
+								//m_pospub_v[i].publish(m_ctrl_v[i].posctrl_msg);
 							}
 							//TODO judge if it is time to get into Idle
 						}
 						break;
 						case Hovering:{
+							printf("hovering!!\n");
+							for (int i=0;i<g_vehicle_num;i++)
+							{
+								if (m_thetaPos[i] >= 50*3.14)
+								{	
+									m_flight_state = Landing;
+								}
+							}
+							
+							if (m_flight_state != Landing)
+							{
+								for(int i=0;i<g_vehicle_num;i++){
+									//posspReset(i);
+									//yawspReset(i);
+									if(m_hovering_numb<10000)
+									{
+										m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height;
+										m_hovering_numb+=1;
+									}
+									if(m_hovering_numb == 10000)
+									{
+										m_flight_state = Circling;
+										m_hovering_numb == 0;
+									}
+									/*if (m_ctrl_v[i].posctrl_msg.pos_sp.x<0.5){
+										m_ctrl_v[i].posctrl_msg.pos_sp.x += 0.2*_dt_deriv;
+									}*/
+									m_pospub_v[i].publish(m_ctrl_v[i].posctrl_msg);
+								}
+							}	
+							
+						}
+						break;
+						case Circling:{
+							printf("begin circling!!\n");
 							for(int i=0;i<g_vehicle_num;i++){
-								//posspReset(i);
-								//yawspReset(i);
-								m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height;
-								/*if (m_ctrl_v[i].posctrl_msg.pos_sp.x<0.5){
-									m_ctrl_v[i].posctrl_msg.pos_sp.x += 0.2*_dt_deriv;
-								}*/
-								
-								m_pospub_v[i].publish(m_ctrl_v[i].posctrl_msg);
+								command_circling(i,_dt_deriv);
+								//m_pospub_v[i].publish(m_ctrl_v[i].posctrl_msg);
 							}
 						}
-						default:
-						break;
 					}//end switch state
 				}//end case posctrl mode
 				break;
 				case MODE_TRJ:{
-
+					
 				}
 				break;
 				default:
@@ -337,7 +388,91 @@ public:
 			l_arrow[joy_index][i] = m_joy_v[joy_index].curr_arrow[i];
 		}
 	}
-	void pos_estCallback(const easyfly::pos_est::ConstPtr& est, int vehicle_index)
+
+	void vicon_markerCallback(const vicon_bridge::Markers::ConstPtr& msg)
+	{	
+		m_markers = msg->markers;
+		
+		if(isFirstVicon && msg->markers.size()==g_vehicle_num)
+		{	
+			printf("received vicon_bridge\n");
+			//printf("%d\n",msg->markers.size());
+			for (auto& Marker : m_markers)
+    		{		
+    			printf("hhhh");
+    			Vector3f pos;
+    			pos(0) = Marker.translation.x/1000.0f;
+    			pos(1) = Marker.translation.y/1000.0f;
+    			pos(2) = Marker.translation.z/1000.0f;
+    			swarm_pos.push_back(pos);
+
+    			//resetposController(&m_pos_est);
+    		}
+    		if(swarm_pos.size()!=g_vehicle_num)
+    		{
+    			if(swarm_pos.size()>g_vehicle_num)
+    			{
+    				printf("More vehicles than actually have!! Warning!!\n");
+    			}
+
+    			else if(swarm_pos.size()<g_vehicle_num)
+    			{
+    				printf("Less vehicles than actually have!! Warning!!\n");
+    			}
+   
+    		}
+    		else
+    		{
+    			for (int i=0;i<swarm_pos.size();i++)
+    			{
+    				_takeoff_Pos.push_back(swarm_pos[i]);
+    			}
+    			isFirstVicon = false;
+    			glutInitDisplayMode(GLUT_RGB | GLUT_SINGLE);// 设置显示模式(RGB颜色|单缓冲，对应的还有索引颜色和双缓冲)  
+    			glutInitWindowPosition(100, 100);// 设置窗口的默认显示位置  
+    			glutInitWindowSize(400, 400);// 设置窗口的大小  
+    			glutCreateWindow("Crazyflie Identifier");// 设置窗口的标题  
+				glutMouseFunc(MouseFunc);
+				glutDisplayFunc(&displayFunc);// 设置绘图函数  
+				glutMainLoop();
+    		}
+    		
+    		
+		}
+		if(!isFirstVicon && msg->markers.size()==g_vehicle_num)
+		{
+			for (auto& Marker : m_markers)
+    		{	
+    			Vector3f pos;
+    			pos(0) = Marker.translation.x/1000.0f;
+    			pos(1) = Marker.translation.y/1000.0f;
+    			pos(2) = Marker.translation.z/1000.0f;
+    			printf("%f   %f   %f\n", pos(0),pos(1),pos(2));
+    			for (int i=0;i<g_vehicle_num;i++)
+    			{
+    				Vector3f v_difference = pos-swarm_pos[i];
+    				float norm;
+    				vec3f_norm(&v_difference, norm);
+    				if(  norm < MAX_VELOCITY*MAX_VELOCITY*0.02*0.02) //max circle
+    				{
+    					swarm_pos[i] = pos;
+    				}
+    			}
+    		}
+    		for (int i=0;i<g_vehicle_num;i++)
+    		{
+    			Vector3f pos = swarm_pos[i];
+    			m_pos_estmsg.pos_est.x = pos(0);
+				m_pos_estmsg.pos_est.y = pos(1);
+				m_pos_estmsg.pos_est.z = pos(2);
+				m_pos_estmsg.vehicle_index = i;
+				m_pos_est_v[i].publish(m_pos_estmsg);
+    		}	
+    	}
+    	
+	}
+		
+	/*void pos_estCallback(const easyfly::pos_est::ConstPtr& est, int vehicle_index)
 	{
 		if(isFirstPos){
 			isGotPos = true;
@@ -353,8 +488,8 @@ public:
 		//printf("%f    %f    %f\n", est->pos_est.x, est->pos_est.y, est->pos_est.z);
 		/*m_est_v[vehicle_index].vel_est.x = est->vel_est.x;
 		m_est_v[vehicle_index].vel_est.y = est->vel_est.y;
-		m_est_v[vehicle_index].vel_est.z = est->vel_est.z;*/
-	}
+		m_est_v[vehicle_index].vel_est.z = est->vel_est.z;
+	}*/
 	void att_estCallback(const easyfly::Att_est::ConstPtr& est, int vehicle_index)
 	{
 		//m_att_est_v[vehicle_index].Roll_est = est->Roll_est;
@@ -369,27 +504,27 @@ public:
 	{
 		reset_takeoff = false;
 //		g_statusFlight = statusTakingoff;		
-		m_ctrl_v[i].posctrl_msg.pos_sp.x = _takeoff_Pos(0);
-		m_ctrl_v[i].posctrl_msg.pos_sp.y = _takeoff_Pos(1);
+		m_ctrl_v[i].posctrl_msg.pos_sp.x = _takeoff_Pos[i](0);
+		m_ctrl_v[i].posctrl_msg.pos_sp.y = _takeoff_Pos[i](1);
 		yawspReset(i);
 
 		//printf("pos sp commander: %f  %f  %f\n",m_ctrl_v[i].posctrl_msg.pos_sp.x,m_ctrl_v[i].posctrl_msg.pos_sp.y,m_ctrl_v[i].posctrl_msg.pos_sp.z );
-		if(m_ctrl_v[i].posctrl_msg.pos_sp.z >= _takeoff_Pos(2) + takeoff_objective_height)
+		if(m_ctrl_v[i].posctrl_msg.pos_sp.z >= _takeoff_Pos[i](2) + takeoff_objective_height)
 		{
 			takeoff_switch = false;
-			m_ctrl_v[i].posctrl_msg.pos_sp.z = _takeoff_Pos(2) + takeoff_objective_height;
+			m_ctrl_v[i].posctrl_msg.pos_sp.z = _takeoff_Pos[i](2) + takeoff_objective_height;
 		}
 		else
 		{
 	    	if(takeoff_condition) //in case of a sudden thrust at the beggining..
 	    	{
 	    		//_takeoff_Pos(2) = m_est_v[i].pos_est.z; //reset the takingoff height
-	    		m_ctrl_v[i].posctrl_msg.pos_sp.z = _takeoff_Pos(2) - takeoff_safe_distance;
+	    		m_ctrl_v[i].posctrl_msg.pos_sp.z = _takeoff_Pos[i](2) - takeoff_safe_distance;
 	    		takeoff_condition = false;
 	    	}
 	    	else
 	    	{
-	    		if(m_ctrl_v[i].posctrl_msg.pos_sp.z < _takeoff_Pos(2) + 0.2f)
+	    		if(m_ctrl_v[i].posctrl_msg.pos_sp.z < _takeoff_Pos[i](2) + 0.2f)
 	    		{
 	    			m_ctrl_v[i].posctrl_msg.pos_sp.z += takeoff_low_rate * dt;
 
@@ -400,6 +535,7 @@ public:
 	    		}
 	    		else
 	    		{
+	    			printf("hello,high speed!\n");
 	    			m_ctrl_v[i].posctrl_msg.pos_sp.z += takeoff_high_rate * dt;
 
 	    			m_ctrl_v[i].posctrl_msg.vel_ff.z = takeoff_high_rate;
@@ -411,21 +547,68 @@ public:
 	    		{
 	    			m_flight_state = Automatic;
 	    		}*/
-	    		if(m_est_v[i].pos_est.z > takeoff_objective_height + m_takeoff_switch_Hover)
+	    		printf("%f \n", m_est_v[i].pos_est.z);
+	    		if(m_est_v[i].pos_est.z > takeoff_objective_height - m_takeoff_switch_Hover)// + m_takeoff_switch_Hover)
 	    		{
+	    			printf("HOVERING\n");
 	    			m_flight_state = Hovering;
 	    		}
 	      	}
 	    }
 	}
 
+	void command_circling(int i, float dt)
+	{
+		if (isFirstCircling)
+		{
+			for(int i=0;i<swarm_pos.size();i++)
+			{	
+				m_thetaPos[i] = atan2(_takeoff_Pos[i](1),_takeoff_Pos[i](0)); 
+				m_radius_Pos[i] = sqrt(_takeoff_Pos[i](1)*_takeoff_Pos[i](1) + _takeoff_Pos[i](0)*_takeoff_Pos[i](0));
+			}
+			isFirstCircling = false;
+		}
+		else
+		{
+			bool isReadyToCircle = false;
+			float circle_err = 0.1f;
+			float stretch_step = 0.05f;
+			for (int i=0;i<g_vehicle_num;i++)
+			{
+				if((m_radius_Pos[i]-CIRCLING_R)*(m_radius_Pos[i]-CIRCLING_R)>circle_err)
+				{
+					m_ctrl_v[i].posctrl_msg.pos_sp.x += stretch_step*cos(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.pos_sp.y += stretch_step*sin(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height;	
+				}
+				else
+				{	
+					printf("ready to circling!!\n");
+					isReadyToCircle = true;
+				}		
+			}
+			if(isReadyToCircle)
+			{
+				for(int i=0;i<swarm_pos.size();i++)
+				{
+					m_thetaPos[i] += 3.1415926/200.0f;
+					m_ctrl_v[i].posctrl_msg.pos_sp.x = (m_radius_Pos[i])*cos(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.pos_sp.y = (m_radius_Pos[i])*sin(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height;
+					printf("%f\n",m_thetaPos[i]);
+				}
+			}
+			
+		}			
+		
+	}
 	void control_landing(int i, float dt)
 	{
 		reset_takeoff = false;
 		m_ctrl_v[i].posctrl_msg.pos_sp.x = m_est_v[i].pos_est.x;
 		m_ctrl_v[i].posctrl_msg.pos_sp.y = m_est_v[i].pos_est.y;
 		m_ctrl_v[i].posctrl_msg.pos_sp.z -= m_landspeed * dt;
-		if (m_est_v[i].pos_est.z<=_takeoff_Pos(2) + m_land_switch_idle)
+		if (m_est_v[i].pos_est.z<=_takeoff_Pos[i](2) + m_land_switch_idle)
 		{
 			m_flight_state = Idle;
 		}
@@ -435,6 +618,7 @@ public:
 int main(int argc, char **argv)
 {
 //  int ret = init_scan(argc, argv);
+	glutInit(&argc, argv);
 	ros::init(argc, argv, "commander");
 	ros::NodeHandle n;
 	// ros::NodeHandle n;
