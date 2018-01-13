@@ -11,6 +11,8 @@ float dead_zone_f(float a, float b);
 #define MAX_THRUST 100 //grams
 #define DEG2RAD 0.01745
 #define RAD2DEG 57.3
+#define MAX_VELOCITY 2
+#define CIRCLING_R 3
 
 #define MODE_RAW 0
 #define MODE_POS 1
@@ -21,5 +23,6 @@ float dead_zone_f(float a, float b);
 #define RawFlying 3
 #define Idle 4
 #define Hovering 5
+#define Circling 6
 //enum enum_TOL_cmd{TakeOff, Land, Kill}
 #endif
