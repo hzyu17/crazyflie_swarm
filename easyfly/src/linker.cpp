@@ -29,10 +29,6 @@ private:
 	std::vector<ros::Time> m_lpos_time_v;
 	std::vector<std::string> m_defaultUri_v, m_uri_v;
 	std::vector<Crazyflie> m_cf_v;
-	//vicon estimator:
-	float m_vicon_freq;
-	float m_vicon_pos_err;
-
 public:
 	Linker(ros::NodeHandle& nh)
 	:m_estpub_v(g_vehicle_num)
@@ -44,13 +40,9 @@ public:
 	,m_uri_v(g_vehicle_num)
 	,m_output_v(g_vehicle_num)
 	,m_outputsub_v(g_vehicle_num)
-	,m_vicon_pos_err(0.1f)
 	{
 		char msg_name[50];
-		
-
 		for(int i=0;i<g_vehicle_num;i++){
-			//m_vicon_est_sub_v[i] = nh.subscribe<geometry_msgs::TransformStamped>(msg_name,5,boost::bind(&vicon_est::vicon_est_Callback, this));
 			sprintf(msg_name,"/vehicle%d/state_est",i);
 			m_estpub_v[i] = nh.advertise<easyfly::state_est>(msg_name, 1);
 			sprintf(msg_name,"/vicon/crazyflie%d/whole",i);
@@ -152,11 +144,6 @@ public:
 		m_output_v[vehicle_index].att_sp.y = msg->att_sp.y;
 		m_output_v[vehicle_index].att_sp.z = msg->att_sp.z;
 		m_output_v[vehicle_index].throttle = msg->throttle;
-	}
-	void vicon_est_Callback(geometry_msgs::TransformStamped::ConstPtr& msg) //get the vicon datas and calculate the vehicles.
-	{
-		float dt = 1.0f/m_vicon_freq;
-		
 	}
 };
 

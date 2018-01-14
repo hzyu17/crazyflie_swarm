@@ -18,7 +18,7 @@
 #include <boost/program_options.hpp>
 #include <crazyflie_cpp/Crazyradio.h>
 #include <crazyflie_cpp/Crazyflie.h>
-int g_vehicle_num; //get from the num_vehicle msg
+int g_vehicle_num; //get from the launch file
 class SwarmLinker
 {
 private:
@@ -33,14 +33,11 @@ private:
 	std::vector<ros::Time> m_lpos_time_v;
 	std::vector<ros::Time> m_lyaw_time_v;
 	std::vector<std::string> m_defaultUri_v, m_uri_v;
-	std::vector<Crazyflie> m_cf_v;
+	//std::vector<Crazyflie> m_cf_v;
 	
 	//vicon estimator:
 	float m_vicon_freq;
 	float m_vicon_pos_err;
-	//ros::Time m_previousTime;
-	//int m_index; //get from the yaw_msg
-
 
 public:
 	SwarmLinker(ros::NodeHandle& nh)
@@ -57,7 +54,6 @@ public:
 	,m_uri_v(g_vehicle_num)
 	,m_output_v(g_vehicle_num)
 	,m_vicon_pos_err(0.1f)
-	//,m_previousTime(ros::Time::now());
 	{
 		char msg_name[50];
 
@@ -117,25 +113,19 @@ public:
 	}
 
 	
-
 	void vicon_est_Callback(geometry_msgs::TransformStamped::ConstPtr& msg) //get the vicon datas and calculate the vehicles.
 	{
 		float dt = 1.0f/m_vicon_freq;
 	}
 };
-void num_veh_Callback(const crazyflie_driver::num_vehiclepub::ConstPtr& msg)
-{
-	g_vehicle_num = msg->g_vehicle_num;
-}
 
 int main(int argc, char **argv)
 {
 	ros::init(argc, argv,"Swarm_Linker");
 	ros::NodeHandle n("~");
-  	ros::Subscriber num_vehiclepub = n.subscribe<crazyflie_driver::num_vehiclepub>("/num_vehiclepub",5,&num_veh_Callback);
+	n.getParam("g_vehicle_num",g_vehicle_num);
 	SwarmLinker swarmlinker(n);
-	//int ret = linker.connect_get_param(argc, argv);
-	//linker.run(50);
+
   return 0;
 
 
