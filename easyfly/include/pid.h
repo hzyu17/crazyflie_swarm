@@ -69,28 +69,29 @@ public:
 	{
 		/*ros::Time time = ros::Time::now();
 		float dt = time.toSec() - m_previousTime.toSec();*/
-		float error = setpt - est;
-		m_integral += error * dt;
-		m_integral = std::max(std::min(m_integral, m_integratorMax), m_integratorMin);
-		float p = m_kp * error;
-		float d = 0;
-		if (dt > 0){
-			d = m_kd * (error - m_previousError) / dt;
-		}
-		float i = m_ki * m_integral;
-		float output = p + d + i;
-		m_previousError = error;
-		//m_previousTime = time;
-		float result = std::max(std::min(output, m_maxOutput), m_minOutput);
-		return result;
+		
+			float error = setpt - est;
+			m_integral += error * dt;
+			m_integral = std::max(std::min(m_integral, m_integratorMax), m_integratorMin);
+			float p = m_kp * error;
+			float d = 0;
+			if (dt > 0){
+				d = m_kd * (error - m_previousError) / dt;
+			}
+			float i = m_ki * m_integral;
+			float output = p + d + i;
+			m_previousError = error;
+			//m_previousTime = time;
+			float result = std::max(std::min(output, m_maxOutput), m_minOutput);
+			return result;	
+		
 	}
 	float pp_update(float est, float setpt)
 	{
-
 		float error = setpt - est;
 		float output = m_kpp * error;
-		float result = output;
-		return result;
+		
+		return output;
 	}
 	
 	};
