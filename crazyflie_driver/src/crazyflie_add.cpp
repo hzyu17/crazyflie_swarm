@@ -3,12 +3,11 @@
 #include "crazyflie_driver/LogBlock.h"
 #include <crazyflie_driver/num_vehiclepub.h>
 #include <stdio.h> //sprintf
-
+int g_vehicle_num;
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "crazyflie_add", ros::init_options::AnonymousName);
   ros::NodeHandle n("~");
-  int g_vehicle_num;
   
   std::string uri;
   std::string  tf_prefix;
@@ -27,9 +26,6 @@ int main(int argc, char **argv)
   //int g_joy_num;
 
   n.getParam("g_vehicle_num",g_vehicle_num);
-
-  //char param_name[50];
-  //load params under the specific namespace
   n.getParam("group_index", group_index);
   n.getParam("uri", uri);
   n.getParam("tf_prefix", tf_prefix);
@@ -49,25 +45,17 @@ int main(int argc, char **argv)
 //publish the number of vehicles
   ros::NodeHandle n_numv;
   char msg_name[50];
-  //sprintf(msg_name,"num_vehiclepub", g_vehicle_num);
-  sprintf(msg_name,"/num_vehiclepub");
-  ros::Publisher num_vehiclepub;
-  crazyflie_driver::num_vehiclepub num_veh_msg;
-  num_vehiclepub = n_numv.advertise<crazyflie_driver::num_vehiclepub>(msg_name,1);
-  num_veh_msg.g_vehicle_num=g_vehicle_num;
-  num_vehiclepub.publish(num_veh_msg); 
 
   ROS_INFO("wait_for_service add_crazyflie");
   char servicename[50];
-  //sprintf(servicename,"/vehicle%d/add_crazyflie",group_index);
   ros::ServiceClient addCrazyflieService = n.serviceClient<crazyflie_driver::AddCrazyflie>("/add_crazyflie"); //client instance
   addCrazyflieService.waitForExistence();
-  //ROS_INFO("found%s",servicename);
   ROS_INFO("found%s","/add_crazyflie");
   
     crazyflie_driver::AddCrazyflie addCrazyflie; //containt of req and res
 
     addCrazyflie.request.g_vehicle_num = g_vehicle_num;
+
     addCrazyflie.request.group_index = group_index;
     addCrazyflie.request.uri = uri;
     addCrazyflie.request.tf_prefix = tf_prefix;
@@ -85,7 +73,7 @@ int main(int argc, char **argv)
   std::vector<std::string> genericLogTopics;
   n.param("genericLogTopics", genericLogTopics, std::vector<std::string>());
   std::vector<int> genericLogTopicFrequencies;
-  n.param("genericLogTopicFrequencies", genericLogTopicFrequencies, std::vector<int>()); //till here OK
+  n.param("genericLogTopicFrequencies", genericLogTopicFrequencies, std::vector<int>()); 
   
   if (genericLogTopics.size() == genericLogTopicFrequencies.size())
   {
