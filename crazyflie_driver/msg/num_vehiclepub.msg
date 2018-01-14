@@ -1,1 +1,0 @@
-int32 g_vehicle_num
