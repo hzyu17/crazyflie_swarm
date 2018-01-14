@@ -1,2 +1,1 @@
 int32 g_vehicle_num
-int32 group_index
