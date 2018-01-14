@@ -152,6 +152,12 @@ private:
     float pm_vbat;
   } __attribute__((packed));
 
+  struct logStablizer {
+    float roll;
+    float pitch;
+    float yaw;
+    uint16_t thrust;
+  } __attribute__((packed));
   
 
 private:
@@ -164,8 +170,9 @@ private:
         m_cf.sendSetpoint(m_output.att_sp.x * RAD2DEG,
 				m_output.att_sp.y * RAD2DEG,
 				m_output.att_sp.z * RAD2DEG,
-				m_output.throttle * 40000);
+				m_output.throttle * 65000);
         m_sentSetpoint = true;
+        printf("m_output.throttle:  %f\n", m_output.throttle);
 	}	
   	bool emergency(
     std_srvs::Empty::Request& req,
@@ -286,16 +293,30 @@ private:
     }
 
     std::unique_ptr<LogBlock<logImu> > logBlockImu;
+    std::unique_ptr<LogBlock<logStablizer> > logblockStablizer;
     std::unique_ptr<LogBlock<log2> > logBlock2;
     std::vector<std::unique_ptr<LogBlockGeneric> > logBlocksGeneric(m_logBlocks.size());
-
+    
 
     if (m_enableLogging) {
+
       std::function<void(const crtpPlatformRSSIAck*)> cb_ack = std::bind(&CrazyflieROS::onEmptyAck, this, std::placeholders::_1);
       m_cf.setEmptyAckCallback(cb_ack);
 
       ROS_INFO("Requesting Logging variables...");
       m_cf.requestLogToc();
+
+      std::function<void(uint32_t, logStablizer*)> cb_stab = std::bind(&CrazyflieROS::onAttitude, this, std::placeholders::_1,std::placeholders::_2);
+
+      logblockStablizer.reset(new LogBlock<logStablizer>(
+          &m_cf,{
+            {"stabilizer", "roll"},
+            {"stabilizer", "pitch"},
+            {"stabilizer", "yaw"},
+            {"stabilizer", "thrust"},
+          }, cb_stab));
+        logblockStablizer->start(1); // 10ms
+
 
       if (m_enable_logging_imu) {
         std::function<void(uint32_t, logImu*)> cb = std::bind(&CrazyflieROS::onImuData, this, std::placeholders::_1, std::placeholders::_2);
@@ -379,6 +400,8 @@ private:
        m_cf.sendSetpoint(0, 0, 0, 0);
     }
 
+
+
   }
 
   void onImuData(uint32_t time_in_ms, logImu* data) {
@@ -409,21 +432,47 @@ private:
 
       m_acc(0) = data->acc_x * -9.81;
       m_acc(1) = data->acc_y * -9.81;
-      m_acc(2) = data->acc_z * -9.81;
+      m_acc(2) = data->acc_z * -9.81; //tested:good
 
-      
-      //calcul pitch, roll estimation
-      /*m_att(1) = data_2_angle(data->acc_x,data->acc_y,data->acc_z);
-      m_att(0) = -data_2_angle(data->acc_y,data->acc_x,data->acc_z);
-      msg_yaw_est.Roll_est = m_att(0);
-      msg_yaw_est.Pitch_est = m_att(1);*/
-      //publish
-      //m_pubImu.publish(msg);
+      m_pubImu.publish(msg);
+      if(m_enable_logging_magnetic_field && m_mag(2)!=0){
+        if(m_init_R)
+        {
+          m_init_R = false;
+          m_prevsT_integ_err = ros::Time::now();
+          //printf("MAG_RAW: %f   %f   %f \n", m_mag(0),m_mag(1),m_mag(2)); 
+          attitude_reset(&m_acc, &m_mag, &m_att);
+        }
+        if(!m_init_R){
+          ros::Time rn = ros::Time::now();
+          float dt = rn.toSec() - m_prevsT_integ_err.toSec();
+          attitude_estimation(&m_att, &m_acc, &m_gyro, &m_mag, dt);
+          msg_yaw_est.att_est.x = (m_att.Euler)(0);
+          msg_yaw_est.att_est.y = (m_att.Euler)(1);
+          msg_yaw_est.att_est.z = (m_att.Euler)(2);
+
+          msg_yaw_est.gyro_est.x = m_gyro(0);
+          msg_yaw_est.gyro_est.y = m_gyro(1);
+          msg_yaw_est.gyro_est.z = m_gyro(2);
+
+          
+          m_yawpub.publish(msg_yaw_est);
+          m_prevsT_integ_err = ros::Time::now();
+          }
+      }
+
     }
   }
 
-  void onLog2Data(uint32_t time_in_ms, log2* data) {
+  void onAttitude(uint32_t time_in_ms, logStablizer* data)
+  {
+      m_attest(0) = degToRad(data->roll);
+      m_attest(1) = degToRad(data->pitch);
+      m_attest(2) = degToRad(data->yaw);
+      //printf("Stabilizer Data!!:  %f    %f    %f    %d\n",m_attest(0), m_attest(1), m_attest(2), data->thrust );
+  }
 
+  void onLog2Data(uint32_t time_in_ms, log2* data) {
     if (m_enable_logging_temperature) {
       sensor_msgs::Temperature msg;
       if (m_use_ros_time) {
@@ -447,33 +496,16 @@ private:
       msg.header.frame_id = m_tf_prefix + "/base_link";
 
       // measured in Tesla
-      m_mag(0) = data->mag_x;
+      m_mag(0) = -data->mag_x;
       m_mag(1) = data->mag_y;
-      m_mag(2) = data->mag_z;
+      m_mag(2) = -data->mag_z; //tested: good
 
       msg.magnetic_field.x = data->mag_x;
       msg.magnetic_field.y = data->mag_y;
       msg.magnetic_field.z = data->mag_z;
       m_pubMag.publish(msg);
-
-      if(m_enable_logging_imu){
-        if(m_init_R)
-        {
-          m_init_R = false;
-          m_prevsT_integ_err = ros::Time::now();
-          attitude_reset(&m_acc, &m_mag, &m_att);
-
-          //m_Attestimator.
-        }
-        else{
-          ros::Time rn = ros::Time::now();
-          float dt = rn.toSec() - m_prevsT_integ_err.toSec();
-          printf("ATT_EST: %f  %f   %f\n", (m_att.Euler)(0),(m_att.Euler)(1),(m_att.Euler)(2));
-          attitude_estimation(&m_att, &m_acc, &m_gyro, &m_mag, dt);
-          m_prevsT_integ_err = ros::Time::now();
-
-        }
-      }
+      //printf("MAG:  %f    %f    %f\n",m_mag(0),m_mag(1),m_mag(2));
+      
       msg_yaw_est.att_est.x = (m_att.Euler)(0);
       msg_yaw_est.att_est.y = (m_att.Euler)(1);
       msg_yaw_est.att_est.z = (m_att.Euler)(2);
@@ -481,26 +513,7 @@ private:
       msg_yaw_est.gyro_est.x = m_gyro(0);
       msg_yaw_est.gyro_est.y = m_gyro(1);
       msg_yaw_est.gyro_est.z = m_gyro(2);
-
-      /*msg_yaw_est.Roll_est = (m_att.Euler)(0);
-      msg_yaw_est.Pitch_est = (m_att.Euler)(1);
-      msg_yaw_est.Yaw_est = (m_att.Euler)(2);*/
-      //printf("ATT_EST: %f  %f   %f\n", (m_att.Euler)(0),(m_att.Euler)(1),(m_att.Euler)(2));
-      m_yawpub.publish(msg_yaw_est);
-
-      //calcul yaw estimation
-      /*if (m_enable_logging_imu){
-        m_xh = data->mag_y*cos(m_att(0))+data->mag_x*sin(m_att(0))*sin(m_att(1))-data->mag_z*cos(m_att(1))*sin(m_att(0));    
-        m_yh = data->mag_x*cos(m_att(1))+data->mag_z*sin(m_att(1));
-        m_att(2) = atan2(m_xh,m_yh)+M_PI/2.0;
-        if(m_att(2) < -M_PI )
-          {m_att(2) += 2*M_PI;}
-        if(m_att(2) > M_PI )
-          {m_att(2) -= 2*M_PI;}
-      	msg_yaw_est.Yaw_est = m_att(2);
-        m_yawpub.publish(msg_yaw_est);
-      }*/
-      //publish
+      
     }
 
     if (m_enable_logging_pressure) {
@@ -517,7 +530,7 @@ private:
       m_pubBattery.publish(msg);
     }
   }
-
+  
   void onLogCustom(uint32_t time_in_ms, std::vector<double>* values, void* userData) {
 
     ros::Publisher* pub = reinterpret_cast<ros::Publisher*>(userData);
@@ -593,7 +606,7 @@ private:
   //Vector4f m_Kcoefs;
   Att m_att;
   //Attitude_estimator m_Attestimator;
-  Vector3f m_acc, m_gyro, m_mag;//, m_init_North;
+  Vector3f m_acc, m_gyro, m_mag, m_attest;//, m_init_North;
 
 };
 //.c_str()
