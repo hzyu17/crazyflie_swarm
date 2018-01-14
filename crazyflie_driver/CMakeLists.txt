@@ -5,6 +5,9 @@ project(crazyflie_driver)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  rospy
+  genmsg
   message_generation
   std_msgs
   tf
@@ -39,12 +42,15 @@ add_message_files(
   FILES
   LogBlock.msg
   GenericLogData.msg
+  Att_est.msg
+  num_vehiclepub.msg
 )
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
   DEPENDENCIES
    std_msgs
+   geometry_msgs
 )
 
 ###################################
@@ -64,6 +70,7 @@ catkin_package(
     std_msgs
     tf
     crazyflie_cpp
+    easyfly
 #  DEPENDS system_lib
 )
 
@@ -73,7 +80,9 @@ catkin_package(
 
 include_directories(
   ${catkin_INCLUDE_DIRS}
+  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include
 )
+
 
 ## Declare a cpp executable
 add_executable(crazyflie_server
@@ -89,6 +98,8 @@ add_dependencies(crazyflie_server
 ## Specify libraries to link a library or executable target against
 target_link_libraries(crazyflie_server
   ${catkin_LIBRARIES}
+  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
+
 )
 
 ## Declare a cpp executable
@@ -103,6 +114,7 @@ add_dependencies(crazyflie_add
 target_link_libraries(crazyflie_add
   ${catkin_LIBRARIES}
 )
+
 
 #############
 ## Install ##

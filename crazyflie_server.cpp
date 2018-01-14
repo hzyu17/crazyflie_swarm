@@ -1,5 +1,5 @@
 #include "ros/ros.h"
-#include "crazyflie_driver/Att_est.h"
+#include "crazyflie_driver/Yaw_est.h"
 #include "crazyflie_driver/AddCrazyflie.h"
 #include "crazyflie_driver/LogBlock.h"
 #include "crazyflie_driver/GenericLogData.h"
@@ -14,22 +14,34 @@
 #include "std_msgs/Float32.h"
 #include <stdio.h> //sprintf
 #include <easyfly/output.h>
+//#include "../MessageTypes/type_methods.h"
+//#include <regex>
 #include <thread>
 #include <mutex>
-#include "attitude_estimation.h"
+#include <math.h>
+#define _USE_MATH_DEFINES //PI
+
 #include <crazyflie_cpp/Crazyflie.h>
 
-using namespace Eigen;
+constexpr double pi() { return std::atan(1)*4; }
 
-/*const float K_Pa = 0.5f;
-const float K_Ia = 0.1f;
-const float K_Pm = 0.3f;
-const float K_Im = 0.1f;*/
+float data_2_angle(float x, float y, float z)	 //in rad
+{
+	float res;
+	res = atan2(x,sqrtf(y*y+z*z));
+	return res;
+}
 
-//constexpr double pi() { return std::atan(1)*4; }
+double degToRad(double deg) {
+    return deg / 180.0 * pi();
+}
+
+double radToDeg(double rad) {
+    return rad * 180.0 / pi();
+}
 
 
-class CrazyflieROS : private Attitude_estimator 
+class CrazyflieROS
 {
 public:
   CrazyflieROS(
@@ -73,29 +85,24 @@ public:
     , m_pubRssi() //Received Signal Strength Indication
     , m_sentSetpoint(false)
     , m_group_index(group_index)
-    , m_att()
-    , m_acc()
-    , m_mag()
-    , m_gyro()
-    , m_init_R(true)
   {
     char msg_name[50];
     m_uri = link_uri;
     ros::NodeHandle n("~");
     ros::NodeHandle nh;
-    sprintf(msg_name,"/vehicle%d/att_est",m_group_index);
-    m_yawpub = n.advertise<crazyflie_driver::Att_est>(msg_name,5);
-    m_prevsT_integ_err = ros::Time::now();
+    sprintf(msg_name,"/vehicle%d/yaw_est",m_group_index);
+    m_yawpub = n.advertise<crazyflie_driver::Yaw_est>(msg_name,5);
 
     m_subscribeCmdVel = n.subscribe(tf_prefix + "/cmd_vel", 1, &CrazyflieROS::cmdVelChanged, this);
     m_serviceEmergency = n.advertiseService(tf_prefix + "/emergency", &CrazyflieROS::emergency, this);
     m_serviceUpdateParams = n.advertiseService(tf_prefix + "/update_params", &CrazyflieROS::updateParams, this);
 
-    sprintf(msg_name,"/vehicle%d/output",m_group_index);
+    sprintf(msg_name,"/vehicle%d/output",group_index);
     m_outputsub = nh.subscribe<easyfly::output>(msg_name,5,&CrazyflieROS::outputCallback, this);
 
     if (m_enable_logging_imu) {
-    	sprintf(msg_name,"/vehicle%d/tf_prefix/Imu",m_group_index);
+    	sprintf(msg_name,"/vehicle%d/tf_prefix",m_group_index);
+      //m_pubImu = n.advertise<sensor_msgs::Imu>(tf_prefix + "/imu", 10);
     	m_pubImu = n.advertise<sensor_msgs::Imu>(msg_name, 10);
     }
     if (m_enable_logging_temperature) {
@@ -124,9 +131,9 @@ public:
     msg_yaw_est.uri = m_uri;
     msg_yaw_est.group_index = m_group_index;
 
-    msg_yaw_est.att_est.x = m_roll_trim;
-    msg_yaw_est.att_est.y = m_pitch_trim;
-    msg_yaw_est.att_est.z = 0.0f;
+    msg_yaw_est.Roll_est = m_roll_trim;
+    msg_yaw_est.Pitch_est = m_pitch_trim;
+    msg_yaw_est.Yaw_est = 0.0f;
     
     std::thread t(&CrazyflieROS::run, this);
     t.detach();
@@ -152,8 +159,6 @@ private:
     float pm_vbat;
   } __attribute__((packed));
 
-  
-
 private:
 	void outputCallback(const easyfly::output::ConstPtr& msg)
 	{
@@ -161,12 +166,12 @@ private:
 		m_output.att_sp.y = msg->att_sp.y;
 		m_output.att_sp.z = msg->att_sp.z;
 		m_output.throttle = msg->throttle;
-        m_cf.sendSetpoint(m_output.att_sp.x * RAD2DEG,
+		m_cf.sendSetpoint(
+				m_output.att_sp.x * RAD2DEG,
 				m_output.att_sp.y * RAD2DEG,
 				m_output.att_sp.z * RAD2DEG,
 				m_output.throttle * 40000);
-        m_sentSetpoint = true;
-	}	
+	}
   	bool emergency(
     std_srvs::Empty::Request& req,
     std_srvs::Empty::Response& res)
@@ -247,9 +252,10 @@ private:
   {
     // m_cf.reboot();
     m_cf.logReset();
-    float frequency = 50;
+
     std::function<void(float)> cb_lq = std::bind(&CrazyflieROS::onLinkQuality, this, std::placeholders::_1);
     m_cf.setLinkQualityCallback(cb_lq);
+
     auto start = std::chrono::system_clock::now();
 
     if (m_enableParameters)
@@ -291,6 +297,7 @@ private:
 
 
     if (m_enableLogging) {
+      //printf("%s\n","HELLO!" );
       std::function<void(const crtpPlatformRSSIAck*)> cb_ack = std::bind(&CrazyflieROS::onEmptyAck, this, std::placeholders::_1);
       m_cf.setEmptyAckCallback(cb_ack);
 
@@ -353,6 +360,7 @@ private:
         logBlocksGeneric[i]->start(logBlock.frequency / 10);
         ++i;
       }
+
     }
 
     ROS_INFO("Ready...");
@@ -398,27 +406,18 @@ private:
       msg.angular_velocity.y = degToRad(data->gyro_y);
       msg.angular_velocity.z = degToRad(data->gyro_z);
 
-      m_gyro(0) = degToRad(data->gyro_x);
-      m_gyro(1) = degToRad(data->gyro_y);
-      m_gyro(2) = degToRad(data->gyro_z);
-
       // measured in mG; need to convert to m/s^2
-      msg.linear_acceleration.x = data->acc_x * -9.81;
-      msg.linear_acceleration.y = data->acc_y * -9.81;
-      msg.linear_acceleration.z = data->acc_z * -9.81;
+      msg.linear_acceleration.x = data->acc_x * 9.81;
+      msg.linear_acceleration.y = data->acc_y * 9.81;
+      msg.linear_acceleration.z = data->acc_z * 9.81;
 
-      m_acc(0) = data->acc_x * -9.81;
-      m_acc(1) = data->acc_y * -9.81;
-      m_acc(2) = data->acc_z * -9.81;
-
-      
       //calcul pitch, roll estimation
-      /*m_att(1) = data_2_angle(data->acc_x,data->acc_y,data->acc_z);
-      m_att(0) = -data_2_angle(data->acc_y,data->acc_x,data->acc_z);
-      msg_yaw_est.Roll_est = m_att(0);
-      msg_yaw_est.Pitch_est = m_att(1);*/
+      m_pitch_est = -data_2_angle(msg.linear_acceleration.x,msg.linear_acceleration.y,msg.linear_acceleration.z);
+      m_roll_est = data_2_angle(msg.linear_acceleration.y,msg.linear_acceleration.x,msg.linear_acceleration.z);
+      msg_yaw_est.Roll_est = m_roll_est;
+      msg_yaw_est.Pitch_est = m_pitch_est;
       //publish
-      //m_pubImu.publish(msg);
+      m_pubImu.publish(msg);
     }
   }
 
@@ -447,60 +446,23 @@ private:
       msg.header.frame_id = m_tf_prefix + "/base_link";
 
       // measured in Tesla
-      m_mag(0) = data->mag_x;
-      m_mag(1) = data->mag_y;
-      m_mag(2) = data->mag_z;
-
       msg.magnetic_field.x = data->mag_x;
       msg.magnetic_field.y = data->mag_y;
       msg.magnetic_field.z = data->mag_z;
-      m_pubMag.publish(msg);
-
-      if(m_enable_logging_imu){
-        if(m_init_R)
-        {
-          m_init_R = false;
-          m_prevsT_integ_err = ros::Time::now();
-          attitude_reset(&m_acc, &m_mag, &m_att);
-
-          //m_Attestimator.
-        }
-        else{
-          ros::Time rn = ros::Time::now();
-          float dt = rn.toSec() - m_prevsT_integ_err.toSec();
-          printf("ATT_EST: %f  %f   %f\n", (m_att.Euler)(0),(m_att.Euler)(1),(m_att.Euler)(2));
-          attitude_estimation(&m_att, &m_acc, &m_gyro, &m_mag, dt);
-          m_prevsT_integ_err = ros::Time::now();
-
-        }
-      }
-      msg_yaw_est.att_est.x = (m_att.Euler)(0);
-      msg_yaw_est.att_est.y = (m_att.Euler)(1);
-      msg_yaw_est.att_est.z = (m_att.Euler)(2);
-
-      msg_yaw_est.gyro_est.x = m_gyro(0);
-      msg_yaw_est.gyro_est.y = m_gyro(1);
-      msg_yaw_est.gyro_est.z = m_gyro(2);
-
-      /*msg_yaw_est.Roll_est = (m_att.Euler)(0);
-      msg_yaw_est.Pitch_est = (m_att.Euler)(1);
-      msg_yaw_est.Yaw_est = (m_att.Euler)(2);*/
-      //printf("ATT_EST: %f  %f   %f\n", (m_att.Euler)(0),(m_att.Euler)(1),(m_att.Euler)(2));
-      m_yawpub.publish(msg_yaw_est);
 
       //calcul yaw estimation
-      /*if (m_enable_logging_imu){
-        m_xh = data->mag_y*cos(m_att(0))+data->mag_x*sin(m_att(0))*sin(m_att(1))-data->mag_z*cos(m_att(1))*sin(m_att(0));    
-        m_yh = data->mag_x*cos(m_att(1))+data->mag_z*sin(m_att(1));
-        m_att(2) = atan2(m_xh,m_yh)+M_PI/2.0;
-        if(m_att(2) < -M_PI )
-          {m_att(2) += 2*M_PI;}
-        if(m_att(2) > M_PI )
-          {m_att(2) -= 2*M_PI;}
-      	msg_yaw_est.Yaw_est = m_att(2);
+      if (m_enable_logging_imu){
+        m_xh = msg.magnetic_field.y*cos(m_roll_trim)+msg.magnetic_field.x*sin(m_roll_trim)*sin(m_pitch_trim)-msg.magnetic_field.z*cos(m_pitch_trim)*sin(m_roll_trim);    
+        m_yh = msg.magnetic_field.x*cos(m_pitch_trim)+msg.magnetic_field.z*sin(m_pitch_trim);
+        msg_yaw_est.Yaw_est = -atan2(m_xh,m_yh)+1.57f;
+        if(msg_yaw_est.Yaw_est < -M_PI )
+          msg_yaw_est.Yaw_est += 2*M_PI;
+        if(msg_yaw_est.Yaw_est > M_PI )
+          msg_yaw_est.Yaw_est -= 2*M_PI;
         m_yawpub.publish(msg_yaw_est);
-      }*/
+      }
       //publish
+      m_pubMag.publish(msg);
     }
 
     if (m_enable_logging_pressure) {
@@ -547,7 +509,6 @@ private:
       }
   }
 
-
 private:
   Crazyflie m_cf;
   std::string m_uri;
@@ -556,6 +517,8 @@ private:
   float m_roll_trim;
   float m_pitch_trim;
   int m_group_index;
+  float m_pitch_est;
+  float m_roll_est;
   float m_xh;
   float m_yh;
   bool m_enableLogging;
@@ -567,7 +530,6 @@ private:
   bool m_enable_logging_magnetic_field;
   bool m_enable_logging_pressure;
   bool m_enable_logging_battery;
-  bool m_init_R;
 
   ros::ServiceServer m_serviceEmergency;
   ros::ServiceServer m_serviceUpdateParams;
@@ -580,21 +542,10 @@ private:
   ros::Publisher m_pubBattery;
   ros::Publisher m_pubRssi;
   ros::Publisher m_yawpub;
-  ros::Time m_prevsT_integ_err;
   std::vector<ros::Publisher> m_pubLogDataGeneric;
-  crazyflie_driver::Att_est msg_yaw_est;
+  crazyflie_driver::Yaw_est msg_yaw_est;
   bool m_sentSetpoint;
   easyfly::output m_output;
-
-  //Vector4f m_Kcoefs;
-  //Vector3f m_init_North;
-  //MatrixXf m_erroM;
-  //MatrixXf m_erroM;
-  //Vector4f m_Kcoefs;
-  Att m_att;
-  //Attitude_estimator m_Attestimator;
-  Vector3f m_acc, m_gyro, m_mag;//, m_init_North;
-
 };
 //.c_str()
 bool add_crazyflie(
@@ -631,13 +582,14 @@ bool add_crazyflie(
   	return true;
 }
 
-
 int main(int argc, char **argv)
 {
   
   ros::init(argc, argv, "/vehicle0");
   ros::NodeHandle n;
   char servicename[50];
+  ros::Subscriber mgroupsub;
+
   //use the absolute addresse for all cfs
   ros::ServiceServer service = n.advertiseService("/add_crazyflie", add_crazyflie);
   ros::spin();
