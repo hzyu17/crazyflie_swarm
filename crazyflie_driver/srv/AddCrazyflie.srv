@@ -1,3 +1,5 @@
+int32 g_vehicle_num
+int32 group_index
 string uri
 string tf_prefix
 float32 roll_trim
