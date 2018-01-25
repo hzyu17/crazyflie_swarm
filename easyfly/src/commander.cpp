@@ -676,60 +676,69 @@ public:
 		    		std::vector<Vector3f> CandidateVectorsFor_i; 
 		    		int numberOfCorrectForm=0;
 		    		set<int> IndexOfWinners;
-		    		for (int j=0;j!=m && j<close_points.size();++j)
-	    			{
-	    				Vector3f temp_a;
-	    				temp_a(0) = close_points[j](0) - close_points[m](0);
-	    				temp_a(1) = close_points[j](1) - close_points[m](1);
-	    				temp_a(2) = close_points[j](2) - close_points[m](2);
-	    				float lenght = vec3f_length(&temp_a);
-	    				
-	    				if((VICON_MARKER_DISTANCE-0.02<lenght&&lenght<VICON_MARKER_DISTANCE+0.02)||(VICON_MARKER_DISTANCE*1.41421356-0.02<lenght<VICON_MARKER_DISTANCE*1.41421356+0.02)) //vector length condition
-	    				{
-	    					CandidateVectorsFor_i.push_back(temp_a); 
-	    					Arc_To_Point[&CandidateVectorsFor_i[count_j]] = j;
-	    					count_j+=1;
-	    				}
-	    			}//for a given m, all j are iterated
-	    			for(int l=0;l<CandidateVectorsFor_i.size();++l)
-	    			{
-	    				for(int k=l+1;k<CandidateVectorsFor_i.size();++k)
-	    				{
-	    					if(IsUAVForm(&CandidateVectorsFor_i[l],&CandidateVectorsFor_i[k]))
-	    					{
-		    					++numberOfCorrectForm;
-		    					IndexOfWinners.insert(k);
-		    					IndexOfWinners.insert(l);
-	    					}
-	    					if(k==CandidateVectorsFor_i.size()-1 && numberOfCorrectForm<2)
-	    					{
-	    						IndexOfWinners.clear();
-	    						numberOfCorrectForm = 0;
-	    					}
-	    				}
-	    				if(numberOfCorrectForm==2)//2 triangles
-	    				{
-	    					IsInRightForm = true;
-	    					//++NumberOfUAVs;
-	    					set<int>::iterator iter;
-	    					Vector3f temp_pos = close_points[m];	
-	    					for(iter = IndexOfWinners.begin(); iter!= IndexOfWinners.end();++iter)
-	    					{
-	    						int index = Arc_To_Point[&CandidateVectorsFor_i[*iter]];
-	    						
-	    						temp_pos(0) += close_points[index](0);
-	    						temp_pos(1) += close_points[index](1);
-	    						temp_pos(2) += close_points[index](2);
-	    					}
-	    					m_swarm_pos[i](0)=temp_pos(0)/4;
-	    					m_swarm_pos[i](1)=temp_pos(1)/4;
-	    					m_swarm_pos[i](2)=temp_pos(2)/4;
-	    					printf("###########position:  %f    %f    %f !!################\n",swarm_pos[i](0),swarm_pos[i](1),swarm_pos[i](2));
-	    					break;
+		    		std::map<Vector3f*, int> Arc_To_Point;
+		    		bool IsInRightForm = false;
+		    		for(int m=0;m<close_points.size();++m)
+    				{
+			    		for (int j=0;j!=m && j<close_points.size();++j)
+		    			{
+		    				Vector3f temp_a;
+		    				temp_a(0) = close_points[j](0) - close_points[m](0);
+		    				temp_a(1) = close_points[j](1) - close_points[m](1);
+		    				temp_a(2) = close_points[j](2) - close_points[m](2);
+		    				float lenght = vec3f_length(&temp_a);
 		    				
-		    			} // all qualified vectors are found
+		    				if((VICON_MARKER_DISTANCE-0.02<lenght&&lenght<VICON_MARKER_DISTANCE+0.02)||(VICON_MARKER_DISTANCE*1.41421356-0.02<lenght<VICON_MARKER_DISTANCE*1.41421356+0.02)) //vector length condition
+		    				{
+		    					CandidateVectorsFor_i.push_back(temp_a); 
+		    					Arc_To_Point[&CandidateVectorsFor_i[count_j]] = j;
+		    					count_j+=1;
+		    				}
+		    			}//for a given m, all j are iterated
+		    			for(int l=0;l<CandidateVectorsFor_i.size();++l)
+		    			{
+		    				for(int k=l+1;k<CandidateVectorsFor_i.size();++k)
+		    				{
+		    					if(IsUAVForm(&CandidateVectorsFor_i[l],&CandidateVectorsFor_i[k]))
+		    					{
+			    					++numberOfCorrectForm;
+			    					IndexOfWinners.insert(k);
+			    					IndexOfWinners.insert(l);
+		    					}
+		    					if(k==CandidateVectorsFor_i.size()-1 && numberOfCorrectForm<2)
+		    					{
+		    						IndexOfWinners.clear();
+		    						numberOfCorrectForm = 0;
+		    					}
+		    				}
+		    				if(numberOfCorrectForm==2)//2 triangles
+		    				{
+		    					IsInRightForm = true;
+		    					//++NumberOfUAVs;
+		    					set<int>::iterator iter;
+		    					Vector3f temp_pos = close_points[m];	
+		    					for(iter = IndexOfWinners.begin(); iter!= IndexOfWinners.end();++iter)
+		    					{
+		    						int index = Arc_To_Point[&CandidateVectorsFor_i[*iter]];
+		    						
+		    						temp_pos(0) += close_points[index](0);
+		    						temp_pos(1) += close_points[index](1);
+		    						temp_pos(2) += close_points[index](2);
+		    					}
+		    					m_swarm_pos[i](0)=temp_pos(0)/4;
+		    					m_swarm_pos[i](1)=temp_pos(1)/4;
+		    					m_swarm_pos[i](2)=temp_pos(2)/4;
+		    					printf("###########position:  %f    %f    %f !!################\n",swarm_pos[i](0),swarm_pos[i](1),swarm_pos[i](2));
+		    					break;
+			    				
+			    			} // all qualified vectors are found
 	    			
-    				} //if 2 triangles
+    					} //if 2 triangles
+    					if(IsInRightForm)
+    					{
+    						break;
+    					}
+    				}
 	    		}else if (close_points.size() == 3) //condition 3
 	    		{
 	    			//printf("*****condition 3\n");
