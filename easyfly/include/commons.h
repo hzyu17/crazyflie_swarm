@@ -13,6 +13,7 @@ float dead_zone_f(float a, float b);
 #define RAD2DEG 57.3
 #define MAX_VELOCITY 2
 #define CIRCLING_R 3
+#define VICON_MARKER_DISTANCE 0.05
 
 #define MODE_RAW 0
 #define MODE_POS 1
