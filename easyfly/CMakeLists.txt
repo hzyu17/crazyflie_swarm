@@ -31,7 +31,7 @@ add_message_files(
   commands.msg
   LogBlock.msg
   GenericLogData.msg
-  Att_est.msg
+  att_est.msg
   pos_ctrl_sp.msg
   raw_ctrl_sp.msg
   trj_ctrl_sp.msg
@@ -77,7 +77,7 @@ catkin_package(
 
 include_directories(
   ${catkin_INCLUDE_DIRS}
-  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include
+  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include
 )
 
 add_executable(commander
@@ -88,8 +88,8 @@ target_link_libraries(commander
   GLU GL glut
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
-  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
-  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/gl_declair.cpp
+  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/type_methode.cpp
+  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/gl_declair.cpp
 )
 
 add_executable(swarm_Server
@@ -99,7 +99,7 @@ add_executable(swarm_Server
 target_link_libraries(swarm_Server
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
-  /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
+  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/type_methode.cpp
 )
 
 add_executable(swarm_addCf
@@ -120,8 +120,8 @@ add_executable(swarm_controller
 target_link_libraries(swarm_controller
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
-   /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
-   /home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/IIR.cpp
+   /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/type_methode.cpp
+   /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/IIR.cpp
 )
 
 add_executable(joysticks2
