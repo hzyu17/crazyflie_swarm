@@ -85,7 +85,7 @@ private:
 	float m_takeoff_switch_Auto;
 	float m_takeoff_switch_Hover;
 	float m_land_switch_idle;
-	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt, isFirstCircling, isHovering;
+	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt, isFirstCircling, isHovering,isClockDirection;
 	float m_gamma;
 	//For sequence initialization
 	Mat src = Mat(Size(1000,1000), CV_8UC3, Scalar(0));
@@ -159,6 +159,7 @@ public:
 	,isFirsrAtt(true)
 	,isFirstCircling(true)
 	,isHovering(false)
+	,isClockDirection(true)
 	,takeoff_objective_height(1.2f)
 	,takeoff_safe_distance(0.0f)
 	,takeoff_low_rate(0.2f)
@@ -801,19 +802,23 @@ public:
 	    		}else if (close_points.size() == 3) //condition 3
 	    		{
 	    			//printf("*****condition 3\n");
-	    			Vector3f tmp_vec_1;
-	    			float tmp_len_1;
-	    			tmp_vec_1(0) = close_points[1](0) - close_points[0](0);
+	    			//Vector3f tmp_vec_1;
+	    			/*tmp_vec_1(0) = close_points[1](0) - close_points[0](0);
 	    			tmp_vec_1(1) = close_points[1](1) - close_points[0](1);
 	    			tmp_vec_1(2) = close_points[1](2) - close_points[0](2);
-	    			vec3f_norm(&tmp_vec_1, &tmp_len_1);
+	    			vec3f_norm(&tmp_vec_1, &tmp_len_1);*/
 
-	    			Vector3f tmp_vec_2;
-	    			float tmp_len_2;
+	    			/*Vector3f tmp_vec_2;
+	    			float tem_len_2;
 	    			tmp_vec_2(0) = close_points[2](0) - close_points[0](0);
 	    			tmp_vec_2(1) = close_points[2](1) - close_points[0](1);
 	    			tmp_vec_2(2) = close_points[2](2) - close_points[0](2);
-	    			vec3f_norm(&tmp_vec_2, &tmp_len_2);
+	    			vec3f_norm(&tmp_vec_2, &tmp_len_2);*/
+
+	    			float tmp_len_1 = dist_two_pts(&close_points[1],&close_points[0]);
+	    			float tmp_len_2 = dist_two_pts(&close_points[2],&close_points[0]);
+	    			Vector3f tmp_vec_1 = vec3f_minus(&close_points[0],&close_points[1]);
+	    			Vector3f tmp_vec_2 = vec3f_minus(&close_points[0],&close_points[2]);
 	    			
 	    			float ctheta = (tmp_vec_1(0)*tmp_vec_2(0)+tmp_vec_1(1)*tmp_vec_2(1)+tmp_vec_1(2)*tmp_vec_2(2))/(tmp_len_1*tmp_len_2);
 	    			if (ctheta < 0.75 && ctheta > 0.65)
@@ -848,12 +853,13 @@ public:
 	    		} else if (close_points.size() == 2) //condition 2
 	    		{
 	    			//printf("*****condition 2\n");
-    				Vector3f tmp_vec;
+    				/*Vector3f tmp_vec;
     				float tmp_len;
 		    		tmp_vec(0) = close_points[1](0) - close_points[0](0);
 		    		tmp_vec(1) = close_points[1](1) - close_points[0](1);
 		    		tmp_vec(2) = close_points[1](2) - close_points[0](2);	
-		    		vec3f_norm(&tmp_vec, &tmp_len);
+		    		vec3f_norm(&tmp_vec, &tmp_len);*/
+    				float tmp_len = dist_two_pts(&close_points[1],&close_points[0]);
 
 		    		if (tmp_len > VEHICLE_EDGE_THRESHOLD && tmp_len < VEHICLE_EDGE_THRESHOLD+0.02)
 		    		{
@@ -868,12 +874,14 @@ public:
 		    			center_pos(0) = 0.5*(close_points[1](0) + close_points[0](0));
 			    		center_pos(1) = 0.5*(close_points[1](1) + close_points[0](1));
 			    		center_pos(2) = 0.5*(close_points[1](2) + close_points[0](2));	
-			    		Vector3f predict_diff;
-			    		predict_diff(0) = swarm_pos_predict[i](0) - center_pos(0);
+			    		//Vector3f predict_diff;
+			    		/*predict_diff(0) = swarm_pos_predict[i](0) - center_pos(0);
 			    		predict_diff(1) = swarm_pos_predict[i](1) - center_pos(1);
 			    		predict_diff(2) = swarm_pos_predict[i](2) - center_pos(2);
 			    		float tmp_dist;
-			    		vec3f_norm(&predict_diff, &tmp_dist);
+			    		vec3f_norm(&predict_diff, &tmp_dist);*/
+			    		float tmp_dist = dist_two_pts(&swarm_pos_predict[i],&center_pos);
+			    		
 
 			    		float ratio = 0.035/tmp_dist;
 			    		Vector3f tmp;
@@ -888,12 +896,13 @@ public:
 	    		} else if (close_points.size() == 1)
 	    		{
 	    			//printf("*****condition 1\n");
-	    			Vector3f predict_diff;
+	    			/*Vector3f predict_diff;
 		    		predict_diff(0) = swarm_pos_predict[i](0) - close_points[0](0);
 		    		predict_diff(1) = swarm_pos_predict[i](1) - close_points[0](1);
 		    		predict_diff(2) = swarm_pos_predict[i](2) - close_points[0](2);
 		    		float tmp_dist;
-		    		vec3f_norm(&predict_diff, &tmp_dist);
+		    		vec3f_norm(&predict_diff, &tmp_dist);*/
+		    		float tmp_dist = dist_two_pts(&swarm_pos_predict[i],&close_points[0]);
 
 		    		float ratio = 0.035/tmp_dist;
 		    		Vector3f tmp;
@@ -927,6 +936,8 @@ public:
 				m_pos_estmsg.vehicle_index = i;
 	    		m_pos_est_v[i].publish(m_pos_estmsg);
 
+	    		m_radius_Pos[i] = sqrt(swarm_pos[i](1)*swarm_pos[i](1) + swarm_pos[i](0)*swarm_pos[i](0));
+	    		m_thetaPos[i] = atan2(swarm_pos[i](1),swarm_pos[i](0)); 
 	    		//printf("*****vehicle%d: %f  %f  %f\n", i, swarm_pos[i](0), swarm_pos[i](1), swarm_pos[i](2));
 	    	}
 	    	if(isHovering)
@@ -1049,7 +1060,7 @@ Concensus contol of UAVs
 
 			*thrust_force = vec3f_dot(acc,&temp);
 
-			*thrust_force /= 480.0f;
+			*thrust_force /= 470.0f;
 			*thrust_force = std::min(*thrust_force,max_thrust);
 			
 	}
@@ -1113,7 +1124,7 @@ Concensus contol of UAVs
 	void command_circling(int i, float dt)
 	{
 		int count_circling = 0;
-		for(int i=0;i<swarm_pos.size();++i)
+		/*for(int i=0;i<swarm_pos.size();++i)
 		{
 			m_radius_Pos[i] = sqrt(swarm_pos[i](1)*swarm_pos[i](1) + swarm_pos[i](0)*swarm_pos[i](0));
 		}
@@ -1127,10 +1138,10 @@ Concensus contol of UAVs
 				m_thetaPos[i] = atan2(swarm_pos[i](1),swarm_pos[i](0)); 
 			}
 			isFirstCircling = false;
-		}
+		}*/
 
-		else 
-		{		
+		//else 
+		//{		
 			//bool isReadyToCircle = false;
 			float circle_err = 0.05f;
 			float outWards_step = 0.05f;
@@ -1164,9 +1175,23 @@ Concensus contol of UAVs
 			
 			if(count_ready_to_circle == g_vehicle_num) //all vehicles are ready for circling..
 			{
+				if(isClockDirection)//Clock direction
+				{
+					for(int i=0;i<swarm_pos.size();i++)
+					{
+						m_thetaPos[i] += 3.1415926/(timeForOneCircle*50.0f);
+					}
+				}
+				else //Counter-Clock direction
+				{
+					for(int i=0;i<swarm_pos.size();i++)
+					{
+						m_thetaPos[i] -= 3.1415926/(timeForOneCircle*50.0f);
+					}
+				}
+				
 				for(int i=0;i<swarm_pos.size();i++)
 				{
-					m_thetaPos[i] += 3.1415926/(timeForOneCircle*50.0f);
 					m_ctrl_v[i].posctrl_msg.pos_sp.x = (m_radius_Pos[i])*cos(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.pos_sp.y = (m_radius_Pos[i])*sin(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;
@@ -1185,7 +1210,7 @@ Concensus contol of UAVs
 			{
 				printf("######  %d  vehicle is ready to circle! \n",count_ready_to_circle );
 			}
-		}			
+		//}			
 		
 	}
 /******************
@@ -1204,6 +1229,97 @@ Concensus contol of UAVs
 		}
 
 	}
+/***********************
+ Move ieme cf to a Ring
+************************/
+	void Move_oneCfOutward(int index, float Desti_Radius)
+	{
+		float desti_err = 0.05f;
+		float outWards_step = 0.05f;
+		//float DestinationCirlcle = 0;
+		//vec3f_norm(Desti_Circle,&DestinationCirlcle);
+
+		if((m_radius_Pos[index]-Desti_Radius)*(m_radius_Pos[index]-Desti_Radius)>desti_err)
+		{
+			if(m_radius_Pos[index]>Desti_Radius)
+			{	
+				m_ctrl_v[index].posctrl_msg.pos_sp.x -= outWards_step*cos(m_thetaPos[index]);
+				m_ctrl_v[index].posctrl_msg.pos_sp.y -= outWards_step*sin(m_thetaPos[index]);
+				m_ctrl_v[index].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
+			}
+			else if(m_radius_Pos[index]<Desti_Radius)
+			{
+				m_ctrl_v[index].posctrl_msg.pos_sp.x += outWards_step*cos(m_thetaPos[index]);
+				m_ctrl_v[index].posctrl_msg.pos_sp.y += outWards_step*sin(m_thetaPos[index]);
+				m_ctrl_v[index].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
+			}
+		}
+		else //hovering
+		{	
+			isHovering = true;
+			posspReset(index, &m_hover_pos);
+		}
+	}
+/*************************************
+ Move index cf to dextination position
+**************************************/
+	bool MoveOneCfToPt(int index, Vector3f* Destination)
+	{
+		m_ctrl_v[index].posctrl_msg.pos_sp.x = (*Destination)(0);
+		m_ctrl_v[index].posctrl_msg.pos_sp.y = (*Destination)(1);
+		m_ctrl_v[index].posctrl_msg.pos_sp.z = (*Destination)(2);
+	}
+/************************************************************
+ Move all cfs to destinated position, in an uniform formation 
+*************************************************************/
+	void SwarmCfFollowCenter(std::vector<Vector3f>* pos_center_trj, Vector3f* Destination)
+	{
+		for(int index=0;index<g_vehicle_num;++index)
+		{
+			m_ctrl_v[index].posctrl_msg.pos_sp.x = (*Destination)(0);
+			m_ctrl_v[index].posctrl_msg.pos_sp.y = (*Destination)(1);
+			m_ctrl_v[index].posctrl_msg.pos_sp.z = (*Destination)(2);
+		}
+	}
+
+/****************************************
+  Calculate the position center of swarm
+*****************************************/
+	void posCenterOfSwarm(std::vector<Vector3f>* swarm, int* index_of_C, Vector3f* Center_pt)
+	{
+		Vector3f pos_sum;
+		pos_sum.setZero();
+		for (int i=0;i<swarm->size();++i)
+		{
+			for(int j=0;j<3;++j)
+			{
+				pos_sum(j) += (*swarm)[i](j);
+			}
+		}
+		for(int j=0;j<3;++j)
+		{
+			(*Center_pt)(j) = pos_sum(j)/swarm->size();
+		}
+		
+		float min_distance = dist_two_pts(&(*swarm)[0],Center_pt);
+
+		for(int i=0;i<swarm->size();++i)
+		{
+			 if(dist_two_pts(&(*swarm)[i],Center_pt)<min_distance)
+			 {
+			 	min_distance = dist_two_pts(&(*swarm)[i],Center_pt);
+			 	*index_of_C = i;
+			 }
+		}
+
+		*Center_pt = (*swarm)[*index_of_C];
+	}
+
+	bool isReached_Destin(Vector3f* pos_estimation, Vector3f* destination, float threshold)
+	{
+		return dist_two_pts(destination,pos_estimation)<threshold;
+	}
+
 
 	void unite(vector<float> &x_init_pos,vector<float> &y_init_pos,vector<float> &x_marker_pos,vector<float> &y_marker_pos)
 	{
