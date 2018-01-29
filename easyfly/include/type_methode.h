@@ -62,4 +62,6 @@ bool IsUAVForm(Vector3f* a, Vector3f*b);
 
 Vector3f CreateVectorFromTwoPts(Vector3f* a, Vector3f* b);
 
+void number_times_vec3f(float* a, Vector3f* v);
+
 #endif
