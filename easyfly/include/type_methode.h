@@ -64,4 +64,8 @@ Vector3f CreateVectorFromTwoPts(Vector3f* a, Vector3f* b);
 
 void number_times_vec3f(float* a, Vector3f* v);
 
+Vector3f vec3f_minus(Vector3f* a, Vector3f* b);
+
+float dist_two_pts(Vector3f* a, Vector3f* b);
+
 #endif

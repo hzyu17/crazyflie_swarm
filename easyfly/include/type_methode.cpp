@@ -340,3 +340,22 @@ void number_times_vec3f(float* a, Vector3f* v)
 	(*v)(1) = (*a) * (*v)(1); 
 	(*v)(2) = (*a) * (*v)(2);
 }
+
+Vector3f vec3f_minus(Vector3f* a, Vector3f* b)
+{
+	Vector3f result;
+	result.setZero();
+	for(int i=0;i<3;++i)
+	{
+		result(i) = (*a)(i) - (*b)(i);
+	}
+	return result;
+}
+
+float dist_two_pts(Vector3f* a, Vector3f* b)
+{
+	Vector3f difference;
+	difference.setZero();
+	difference = vec3f_minus(a,b);
+	return vec3f_length(&difference);
+}
