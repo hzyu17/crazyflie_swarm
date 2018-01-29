@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   vicon_bridge
   genmsg
+  cv_bridge
 )
 
 ################################################
@@ -31,13 +32,13 @@ add_message_files(
   commands.msg
   LogBlock.msg
   GenericLogData.msg
-  att_est.msg
   pos_ctrl_sp.msg
   raw_ctrl_sp.msg
   trj_ctrl_sp.msg
   pos_est.msg
   output.msg
   Recording.msg
+  att_est.msg
 )
 
 ## Generate added messages and services with any dependencies listed here
@@ -75,10 +76,19 @@ catkin_package(
 ## Build ##
 ###########
 
+find_package( OpenCV REQUIRED )
+
+include_directories( ${OpenCV_INCLUDE_DIRS} )
+
 include_directories(
   ${catkin_INCLUDE_DIRS}
-  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include
+  ./include
+ # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include
 )
+
+add_library(gl_declair SHARED include/gl_declair.cpp)
+add_library(IIR SHARED include/IIR.cpp)
+add_library(type_methode SHARED include/type_methode.cpp)
 
 add_executable(commander
   src/commander.cpp
@@ -88,8 +98,11 @@ target_link_libraries(commander
   GLU GL glut
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
-  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/type_methode.cpp
-  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/gl_declair.cpp
+  ${OpenCV_LIBS}
+ # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
+ # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/gl_declair.cpp
+ gl_declair
+ type_methode
 )
 
 add_executable(swarm_Server
@@ -99,7 +112,8 @@ add_executable(swarm_Server
 target_link_libraries(swarm_Server
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
-  /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/type_methode.cpp
+ # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
+ type_methode
 )
 
 add_executable(swarm_addCf
@@ -120,9 +134,12 @@ add_executable(swarm_controller
 target_link_libraries(swarm_controller
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
-   /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/type_methode.cpp
-   /home/lucasyu/catkin_ws/src/crazyflie_swarm/easyfly/include/IIR.cpp
+ #  /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
+ #  /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/IIR.cpp
+ IIR
+ type_methode
 )
+
 
 add_executable(joysticks2
   src/joysticks2.cpp
@@ -131,6 +148,8 @@ target_link_libraries(joysticks2
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
 )
+
+
 
 #add_executable(xbee_linker
 #  src/xbee_linker.cpp
