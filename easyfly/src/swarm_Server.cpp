@@ -91,8 +91,9 @@ public:
       sprintf(msg_name,"/vehicle%d/tf_prefix/Imu",m_group_index);
       m_pubImu = nh.advertise<sensor_msgs::Imu>(msg_name, 10);
     //}
-    sprintf(msg_name,"/vehicle%d/rssi",m_group_index);
-    m_pubRssi = nh.advertise<std_msgs::Float32>(msg_name, 10);
+
+      sprintf(msg_name,"/vehicle%d/rssi",m_group_index);
+      m_pubRssi = nh.advertise<std_msgs::Float32>(msg_name, 10);
     //}
     
 
@@ -128,6 +129,9 @@ private:
     float acc_x;
     float acc_y;
     float acc_z;
+    float gyro_x;
+    float gyro_y;
+    float gyro_z;
   } __attribute__((packed));
 
 private:
@@ -293,6 +297,9 @@ private:
       	      {"acc", "x"},
       	      {"acc", "y"},
       	      {"acc", "z"},
+              {"gyro","x"},
+              {"gyro","y"},
+              {"gyro","z"},
       	      }, cb));
       	  logBlockImu->start(1); // 10ms
       	  //printf("%f\n", cb.acc_x);
@@ -353,6 +360,10 @@ private:
       acc_IMU(0) = msg.linear_acceleration.x;
       acc_IMU(1) = msg.linear_acceleration.y;
       acc_IMU(2) = msg.linear_acceleration.z;
+
+      msg.angular_velocity.x = degToRad(data->gyro_x);
+      msg.angular_velocity.y = degToRad(data->gyro_y);
+      msg.angular_velocity.z = degToRad(data->gyro_z);
       
       m_pubImu.publish(msg);
     }//if m_enable_logging_imu

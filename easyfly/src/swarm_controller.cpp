@@ -355,6 +355,10 @@ public:
 		(m_sp_vecs.v_posctrl_posSp)(0) = ctrl->pos_sp.x;
 		(m_sp_vecs.v_posctrl_posSp)(1) = ctrl->pos_sp.y;
 		(m_sp_vecs.v_posctrl_posSp)(2) = ctrl->pos_sp.z;
+		
+		m_recording.Rec_posSp(0) = ctrl->pos_sp.x;
+		m_recording.Rec_posSp(1) = ctrl->pos_sp.y;
+		m_recording.Rec_posSp(2) = ctrl->pos_sp.z;
 
 		(m_sp_vecs.v_posctrl_velFF)(0) = ctrl->vel_ff.x;
 		(m_sp_vecs.v_posctrl_velFF)(1) = ctrl->vel_ff.y;
@@ -433,10 +437,9 @@ void Controller::control_nonLineaire(M_recording* m_recording, const Vector3f* p
 			m_recording->Rec_velEst(2) = vz_temp_est;
 			//m_posEstPub.publish(posestMsg);
 
-			
-			vel_Sp(0) =  m_pidX.pp_update(x_temp_est , x_sp); //+ff
-			vel_Sp(1) =  m_pidY.pp_update(y_temp_est , y_sp);
-			vel_Sp(2) =  m_pidZ.pp_update(z_temp_est , z_sp);
+			vel_Sp(0) =  m_pidX.pp_update(x_temp_est , x_sp)*0.7f + (*Vel_ff)(0)*0.3f; //+ff
+			vel_Sp(1) =  m_pidY.pp_update(y_temp_est , y_sp)*0.7f + (*Vel_ff)(1)*0.3f;
+			vel_Sp(2) =  m_pidZ.pp_update(z_temp_est , z_sp)*0.7f + (*Vel_ff)(2)*0.3f;
 
 			float vx_sp = vel_Sp(0);
 			float vy_sp = vel_Sp(1);
@@ -454,6 +457,9 @@ void Controller::control_nonLineaire(M_recording* m_recording, const Vector3f* p
 			_acc_Sp_W(2) =  m_pidZ.pid_update(vz_temp_est,vel_Sp(2),dt);
 
 			//_acc_Sp_W(2) =  m_pidVz.pid_update(z_temp_est,pos_Sp(2),dt);
+			_acc_Sp_W(0) = 0.7f*_acc_Sp_W(0) + (*acc_Sp)(0)*0.3f;
+			_acc_Sp_W(1) = 0.7f*_acc_Sp_W(1) + (*acc_Sp)(1)*0.3f;
+			_acc_Sp_W(2) = 0.7f*_acc_Sp_W(2) + (*acc_Sp)(2)*0.3f;
 
 			//vec3f_derivative(&(*acc_Sp), &vel_Sp, &l_velsp, dt);
 			

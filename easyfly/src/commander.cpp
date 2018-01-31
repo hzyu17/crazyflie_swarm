@@ -9,6 +9,7 @@
 #include <tf/transform_listener.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/Twist.h>
+#include "sensor_msgs/Imu.h"
 #include <easyfly/commands.h>
 #include <easyfly/pos_ctrl_sp.h>
 #include <easyfly/raw_ctrl_sp.h>
@@ -61,7 +62,7 @@ private:
 	std::vector<ros::Publisher> m_rawpub_v, m_pospub_v, m_trjpub_v, m_pos_est_v;
 	ros::Publisher m_cmdpub;
 	ros::Subscriber m_viconMarkersub;
-	std::vector<ros::Subscriber> m_joysub_v, m_estsub_v, m_estyawsub_v;
+	std::vector<ros::Subscriber> m_joysub_v, m_estsub_v, m_estyawsub_v,m_imusub_v;
 	std::vector<vicon_bridge::Marker> m_markers;
 	//std::vector<MatrixXf> m_Connection_Matrix;
 	MatrixXf m_Connection_Matrix;
@@ -85,7 +86,7 @@ private:
 	float m_takeoff_switch_Auto;
 	float m_takeoff_switch_Hover;
 	float m_land_switch_idle;
-	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt, isFirstCircling, isHovering,isClockDirection;
+	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt, isFirstCircling, isHovering;
 	float m_gamma;
 	//For sequence initialization
 	Mat src = Mat(Size(1000,1000), CV_8UC3, Scalar(0));
@@ -114,6 +115,7 @@ private:
 	std::vector<M_Ctrl> m_ctrl_v;
 	std::vector<easyfly::pos_est> m_est_v;
 	std::vector<Vector3f> m_att_est_v;
+	std::vector<Vector3f> m_gyro_est_v;
 	std::vector<Vector3f> swarm_pos;
 	std::vector<Vector3f> m_hover_pos;
 	std::vector<Vector3f> swarm_pos_predict;//records prediction based on last time position, error, and velocity
@@ -133,6 +135,7 @@ private:
 public:
 	Commander(ros::NodeHandle& nh)
 	:m_rawpub_v(g_vehicle_num)
+	,m_imusub_v(g_vehicle_num)
 	,m_pospub_v(g_vehicle_num)
 	,m_trjpub_v(g_vehicle_num)
 	,m_joysub_v(g_joy_num)
@@ -142,6 +145,7 @@ public:
 	,m_ctrl_v(g_vehicle_num)
 	,m_est_v(g_vehicle_num)
 	,m_att_est_v(g_vehicle_num)
+	,m_gyro_est_v(g_vehicle_num)
 	,m_pos_est_v(g_vehicle_num)
 	,yaw_bias(g_vehicle_num)//walt
 	,swarm_pos(0)
@@ -159,7 +163,6 @@ public:
 	,isFirsrAtt(true)
 	,isFirstCircling(true)
 	,isHovering(false)
-	,isClockDirection(true)
 	,takeoff_objective_height(1.2f)
 	,takeoff_safe_distance(0.0f)
 	,takeoff_low_rate(0.2f)
@@ -199,6 +202,10 @@ public:
 			m_pospub_v[i] = nh.advertise<easyfly::pos_ctrl_sp>(msg_name, 1);
 			sprintf(msg_name,"/vehicle%d/trj_ctrl_sp",i);
 			m_trjpub_v[i] = nh.advertise<easyfly::trj_ctrl_sp>(msg_name, 1);
+
+			sprintf(msg_name,"/vehicle%d/tf_prefix/Imu",i);
+			m_imusub_v[i] = nh.subscribe<sensor_msgs::Imu>(msg_name,5,boost::bind(&Commander::imuCallback, this, _1, i));
+
 			sprintf(msg_name,"/vehicle%d/att_est",i);
 			m_estyawsub_v[i] = nh.subscribe<easyfly::att_est>(msg_name,5,boost::bind(&Commander::att_estCallback, this, _1, i));
 
@@ -320,7 +327,6 @@ public:
 	    							if(count_hovering_num == g_vehicle_num)
 	    							{
 	    								isHovering = true;
-	    								
 	    								m_flight_state = Hovering;
 	    							}
 								}
@@ -339,7 +345,7 @@ public:
 							if(m_hovering_time>=10.0f)
 							{
 								printf("####Already hover over 10 second!!!###\n");
-								m_flight_state = Circling;
+								m_flight_state = Circling;//test circle control
 								m_hovering_time = 0.0f;
 							}
 							ros::Time begin_hovering = ros::Time::now();
@@ -356,8 +362,12 @@ public:
 						case Circling:{
 							printf("begin circling!!\n");
 							for(int i=0;i<g_vehicle_num;i++){
-								command_circling(i,_dt_deriv);
+								command_circling(_dt_deriv);
 							}
+							break;
+						}
+
+						case Funny:{
 							break;
 						}
 					}//end switch state
@@ -382,9 +392,6 @@ public:
 
 	void posspReset(int index, std::vector<Vector3f>* ResetPos)
 	{
-		/*m_ctrl_v[index].posctrl_msg.pos_sp.x = m_est_v[index].pos_est.x;
-		m_ctrl_v[index].posctrl_msg.pos_sp.y = m_est_v[index].pos_est.y;
-		m_ctrl_v[index].posctrl_msg.pos_sp.z = m_est_v[index].pos_est.z;*/
 		m_ctrl_v[index].posctrl_msg.pos_sp.x = (*ResetPos)[index](0);
 		m_ctrl_v[index].posctrl_msg.pos_sp.y = (*ResetPos)[index](1);
 		m_ctrl_v[index].posctrl_msg.pos_sp.z = (*ResetPos)[index](2);
@@ -556,31 +563,94 @@ public:
 		}
 	}
 
-		
-	void att_estCallback(const easyfly::att_est::ConstPtr& est, int vehicle_index)
+	void unite(vector<float> &x_init_pos,vector<float> &y_init_pos,vector<float> &x_marker_pos,vector<float> &y_marker_pos)
 	{
-		//m_att_est_v[vehicle_index].Roll_est = est->Roll_est;
-		isGotAtt = true;
+		vector<bool> all_union(x_marker_pos.size(),0);
 
-		(m_att_est_v[vehicle_index])(0) = est->att_est.x;
-		(m_att_est_v[vehicle_index])(1) = est->att_est.y;
-		(m_att_est_v[vehicle_index])(2) = est->att_est.z;
-		if(yaw_manuel_ready){
-			if(!yaw_est_ready[vehicle_index]){
-				yaw_bias[vehicle_index]=yaw_manuel[vehicle_index] - est->att_est.z;
-				yaw_est_ready[vehicle_index]=true;
-				char msg_name[50];
-				sprintf(msg_name,"/vehicle%d/yaw_bias",vehicle_index);
-				ros::NodeHandle n;
-	// ros::NodeHandle n;
-				n.setParam(msg_name, yaw_bias[vehicle_index]);
+		for(int i=0;i<x_marker_pos.size();++i)//kick out noise
+		{
+		    int within_circle = 0;
+			for(int j=0;j<x_marker_pos.size();++j)
+			{
+				if(sqrt((x_marker_pos[i]-x_marker_pos[j])*(x_marker_pos[i]-x_marker_pos[j])+(y_marker_pos[i]-y_marker_pos[j])*(y_marker_pos[i]-y_marker_pos[j]))<ABOUT_EDGE)
+					++within_circle;
 			}
-			(m_att_est_v[vehicle_index])(2) += yaw_bias[vehicle_index];
+			if(within_circle<3)
+				all_union[i]=1;
 		}
-		//printf("YAW_GET_commander:  %f   %f \n",est->att_est.z, (m_att_est_v[vehicle_index])(2));
+		for(int i=0;i<x_marker_pos.size();++i)//choose the first point
+		{
+			if(all_union[i])continue;
+			all_union[i]=1;
+			vector<int> num_of_point(2,-1);
+			vector<float> min_dstc(3,-1);
 
+		    float temp_dstc;
+		    for(int j=1;j<x_marker_pos.size();++j)//find the nearest point
+		    {
+		    	if(all_union[j])continue;
+		    	temp_dstc=(x_marker_pos[i]-x_marker_pos[j])*(x_marker_pos[i]-x_marker_pos[j])+(y_marker_pos[i]-y_marker_pos[j])*(y_marker_pos[i]-y_marker_pos[j]);
+		    	if(min_dstc[0]>temp_dstc||min_dstc[0]<0)
+		    	{
+		    		num_of_point[0]=j;
+		    		min_dstc[0]=temp_dstc;
+		    	}
+		    }
+		    all_union[num_of_point[0]]=1;
+		    for(int j=1;j<x_marker_pos.size();++j)//find the second nearest point
+		    {
+		    	if(all_union[j])continue;
+		    	temp_dstc=(x_marker_pos[i]-x_marker_pos[j])*(x_marker_pos[i]-x_marker_pos[j])+(y_marker_pos[i]-y_marker_pos[j])*(y_marker_pos[i]-y_marker_pos[j]);
+		    	if(min_dstc[1]>temp_dstc||min_dstc[1]<0)
+		    	{
+		    		num_of_point[1]=j;
+		    		min_dstc[1]=temp_dstc;
+		    	}
+		    }
+		    all_union[num_of_point[1]]=1;
+		    min_dstc[2]=(x_marker_pos[num_of_point[1]]-x_marker_pos[num_of_point[0]])*(x_marker_pos[num_of_point[1]]-x_marker_pos[num_of_point[0]])+(y_marker_pos[num_of_point[1]]-y_marker_pos[num_of_point[0]])*(y_marker_pos[num_of_point[1]]-y_marker_pos[num_of_point[0]]);
+            
+            float max_dstc;   
+		    int num_of_max_dstc1,num_of_max_dstc2; 
+		    if(min_dstc[0]>min_dstc[1])//find the farthest two points
+		    {
+                num_of_max_dstc1=i;
+                num_of_max_dstc2=num_of_point[0];
+                max_dstc=min_dstc[0];
+		    }
+		    else{
+		    	num_of_max_dstc1=i;
+                num_of_max_dstc2=num_of_point[1];
+                max_dstc=min_dstc[1];
+		    }
+		    if(max_dstc<min_dstc[2])
+		    {
+		    	num_of_max_dstc1=num_of_point[0];
+                num_of_max_dstc2=num_of_point[1];
+		    }
 
+		    temp_dstc=x_marker_pos[num_of_max_dstc1]+x_marker_pos[num_of_max_dstc2];//calculate the centre point
+		    x_init_pos.push_back(temp_dstc/2);
+		    temp_dstc=y_marker_pos[num_of_max_dstc1]+y_marker_pos[num_of_max_dstc2];
+		    y_init_pos.push_back(temp_dstc/2);
+
+		    for(int j=1;j<x_marker_pos.size();++j)//find and kick out the forth point, if cant find, it doesnt matter
+		    {
+		    	if(all_union[j])continue;
+		    	float cross_product,len_1,len_2;
+		    	len_1=sqrt((x_marker_pos[num_of_max_dstc1]-x_marker_pos[j])*(x_marker_pos[num_of_max_dstc1]-x_marker_pos[j])+(y_marker_pos[num_of_max_dstc1]-y_marker_pos[j])*(y_marker_pos[num_of_max_dstc1]-y_marker_pos[j]));
+		    	len_2=sqrt((x_marker_pos[num_of_max_dstc2]-x_marker_pos[j])*(x_marker_pos[num_of_max_dstc2]-x_marker_pos[j])+(y_marker_pos[num_of_max_dstc2]-y_marker_pos[j])*(y_marker_pos[num_of_max_dstc2]-y_marker_pos[j]));
+		    	cross_product=(x_marker_pos[num_of_max_dstc2]-x_marker_pos[j])*(x_marker_pos[num_of_max_dstc1]-x_marker_pos[j])+(y_marker_pos[num_of_max_dstc2]-y_marker_pos[j])*(y_marker_pos[num_of_max_dstc1]-y_marker_pos[j]);
+		    	float cos_degree=cross_product/len_1/len_2;
+		    	if(cos_degree<0.08 && cos_degree>-0.08)
+		    	{
+		    		all_union[j]=1;
+		    		break;
+		    	}
+		    }
+		}
 	}
+	
 	void vicon_markerCallback(const vicon_bridge::Markers::ConstPtr& msg)
 	{	
 		m_markers = msg->markers;
@@ -802,35 +872,31 @@ public:
 	    		}else if (close_points.size() == 3) //condition 3
 	    		{
 	    			//printf("*****condition 3\n");
-	    			//Vector3f tmp_vec_1;
-	    			/*tmp_vec_1(0) = close_points[1](0) - close_points[0](0);
+	    			Vector3f tmp_vec_1;
+	    			float tmp_len_1;
+	    			tmp_vec_1(0) = close_points[1](0) - close_points[0](0);
 	    			tmp_vec_1(1) = close_points[1](1) - close_points[0](1);
 	    			tmp_vec_1(2) = close_points[1](2) - close_points[0](2);
-	    			vec3f_norm(&tmp_vec_1, &tmp_len_1);*/
+	    			vec3f_norm(&tmp_vec_1, &tmp_len_1);
 
-	    			/*Vector3f tmp_vec_2;
-	    			float tem_len_2;
+	    			Vector3f tmp_vec_2;
+	    			float tmp_len_2;
 	    			tmp_vec_2(0) = close_points[2](0) - close_points[0](0);
 	    			tmp_vec_2(1) = close_points[2](1) - close_points[0](1);
 	    			tmp_vec_2(2) = close_points[2](2) - close_points[0](2);
-	    			vec3f_norm(&tmp_vec_2, &tmp_len_2);*/
-
-	    			float tmp_len_1 = dist_two_pts(&close_points[1],&close_points[0]);
-	    			float tmp_len_2 = dist_two_pts(&close_points[2],&close_points[0]);
-	    			Vector3f tmp_vec_1 = vec3f_minus(&close_points[0],&close_points[1]);
-	    			Vector3f tmp_vec_2 = vec3f_minus(&close_points[0],&close_points[2]);
+	    			vec3f_norm(&tmp_vec_2, &tmp_len_2);
 	    			
 	    			float ctheta = (tmp_vec_1(0)*tmp_vec_2(0)+tmp_vec_1(1)*tmp_vec_2(1)+tmp_vec_1(2)*tmp_vec_2(2))/(tmp_len_1*tmp_len_2);
 	    			if (ctheta < 0.75 && ctheta > 0.65)
 	    			{
-	    				if (tmp_len_2/tmp_len_1 < 1.45 && tmp_len_2/tmp_len_1 > 1.35)
+	    				if (tmp_len_2/tmp_len_1 < 1.5 && tmp_len_2/tmp_len_1 > 1.3)
 	    				{
 	    					Vector3f tmp;
 			    			tmp(0) = 0.5*(close_points[2](0) + close_points[0](0));
 			    			tmp(1) = 0.5*(close_points[2](1) + close_points[0](1));
 			    			tmp(2) = 0.5*(close_points[2](2) + close_points[0](2));	
 			    			m_swarm_pos[i] = tmp;
-	    				} else if (tmp_len_1/tmp_len_2 < 1.45 && tmp_len_1/tmp_len_2 > 1.35)
+	    				} else if (tmp_len_1/tmp_len_2 < 1.5 && tmp_len_1/tmp_len_2 > 1.3)
 	    				{
 	    					Vector3f tmp;
 			    			tmp(0) = 0.5*(close_points[1](0) + close_points[0](0));
@@ -853,13 +919,12 @@ public:
 	    		} else if (close_points.size() == 2) //condition 2
 	    		{
 	    			//printf("*****condition 2\n");
-    				/*Vector3f tmp_vec;
+    				Vector3f tmp_vec;
     				float tmp_len;
 		    		tmp_vec(0) = close_points[1](0) - close_points[0](0);
 		    		tmp_vec(1) = close_points[1](1) - close_points[0](1);
 		    		tmp_vec(2) = close_points[1](2) - close_points[0](2);	
-		    		vec3f_norm(&tmp_vec, &tmp_len);*/
-    				float tmp_len = dist_two_pts(&close_points[1],&close_points[0]);
+		    		vec3f_norm(&tmp_vec, &tmp_len);
 
 		    		if (tmp_len > VEHICLE_EDGE_THRESHOLD && tmp_len < VEHICLE_EDGE_THRESHOLD+0.02)
 		    		{
@@ -874,14 +939,12 @@ public:
 		    			center_pos(0) = 0.5*(close_points[1](0) + close_points[0](0));
 			    		center_pos(1) = 0.5*(close_points[1](1) + close_points[0](1));
 			    		center_pos(2) = 0.5*(close_points[1](2) + close_points[0](2));	
-			    		//Vector3f predict_diff;
-			    		/*predict_diff(0) = swarm_pos_predict[i](0) - center_pos(0);
+			    		Vector3f predict_diff;
+			    		predict_diff(0) = swarm_pos_predict[i](0) - center_pos(0);
 			    		predict_diff(1) = swarm_pos_predict[i](1) - center_pos(1);
 			    		predict_diff(2) = swarm_pos_predict[i](2) - center_pos(2);
 			    		float tmp_dist;
-			    		vec3f_norm(&predict_diff, &tmp_dist);*/
-			    		float tmp_dist = dist_two_pts(&swarm_pos_predict[i],&center_pos);
-			    		
+			    		vec3f_norm(&predict_diff, &tmp_dist);
 
 			    		float ratio = 0.035/tmp_dist;
 			    		Vector3f tmp;
@@ -896,13 +959,12 @@ public:
 	    		} else if (close_points.size() == 1)
 	    		{
 	    			//printf("*****condition 1\n");
-	    			/*Vector3f predict_diff;
+	    			Vector3f predict_diff;
 		    		predict_diff(0) = swarm_pos_predict[i](0) - close_points[0](0);
 		    		predict_diff(1) = swarm_pos_predict[i](1) - close_points[0](1);
 		    		predict_diff(2) = swarm_pos_predict[i](2) - close_points[0](2);
 		    		float tmp_dist;
-		    		vec3f_norm(&predict_diff, &tmp_dist);*/
-		    		float tmp_dist = dist_two_pts(&swarm_pos_predict[i],&close_points[0]);
+		    		vec3f_norm(&predict_diff, &tmp_dist);
 
 		    		float ratio = 0.035/tmp_dist;
 		    		Vector3f tmp;
@@ -936,8 +998,6 @@ public:
 				m_pos_estmsg.vehicle_index = i;
 	    		m_pos_est_v[i].publish(m_pos_estmsg);
 
-	    		m_radius_Pos[i] = sqrt(swarm_pos[i](1)*swarm_pos[i](1) + swarm_pos[i](0)*swarm_pos[i](0));
-	    		m_thetaPos[i] = atan2(swarm_pos[i](1),swarm_pos[i](0)); 
 	    		//printf("*****vehicle%d: %f  %f  %f\n", i, swarm_pos[i](0), swarm_pos[i](1), swarm_pos[i](2));
 	    	}
 	    	if(isHovering)
@@ -951,6 +1011,37 @@ public:
 	    		isHovering = false;
 	    	}
 		}// else if  	
+	}
+
+	void att_estCallback(const easyfly::att_est::ConstPtr& est, int vehicle_index)
+	{
+		//m_att_est_v[vehicle_index].Roll_est = est->Roll_est;
+		isGotAtt = true;
+
+		(m_att_est_v[vehicle_index])(0) = est->att_est.x;
+		(m_att_est_v[vehicle_index])(1) = est->att_est.y;
+		(m_att_est_v[vehicle_index])(2) = est->att_est.z;
+		printf(" ##### Roll:  %f   Pitch:    %f      Yaw:     %f ######\n",est->att_est.x,est->att_est.y,est->att_est.z);
+		if(yaw_manuel_ready){
+			if(!yaw_est_ready[vehicle_index]){
+				yaw_bias[vehicle_index]=yaw_manuel[vehicle_index] - est->att_est.z;
+				yaw_est_ready[vehicle_index]=true;
+				char msg_name[50];
+				sprintf(msg_name,"/vehicle%d/yaw_bias",vehicle_index);
+				ros::NodeHandle n;
+				n.setParam(msg_name, yaw_bias[vehicle_index]);
+			}
+			(m_att_est_v[vehicle_index])(2) += yaw_bias[vehicle_index];
+		}
+		//printf("YAW_GET_commander:  %f   %f \n",est->att_est.z, (m_att_est_v[vehicle_index])(2));
+	}
+
+	void imuCallback(const sensor_msgs::Imu::ConstPtr& est, int vehicle_index)
+	{
+		m_gyro_est_v[vehicle_index](0) = est->angular_velocity.x;
+		m_gyro_est_v[vehicle_index](1) = est->angular_velocity.y;
+		m_gyro_est_v[vehicle_index](2) = est->angular_velocity.z;
+		//printf("####### gyro_estimation:  %f     %f     %f\n ########",m_gyro_est_v[vehicle_index](0),m_gyro_est_v[vehicle_index](1),m_gyro_est_v[vehicle_index](2));
 	}
 /***********************
 Concensus contol of UAVs
@@ -1016,9 +1107,8 @@ Concensus contol of UAVs
 			input_temp(3) = thrust_i;
 			InputToUAVs.push_back(input_temp);
 		}
-
-
 	}
+
 	void AccSp_to_attSp(Vector3f* acc, Vector3f* att, int index, float* thrust_force)
 	{
 		float yaw_est = (m_att_est_v[index])(DimOfVarSpace);
@@ -1060,15 +1150,14 @@ Concensus contol of UAVs
 
 			*thrust_force = vec3f_dot(acc,&temp);
 
-			*thrust_force /= 470.0f;
-			*thrust_force = std::min(*thrust_force,max_thrust);
-			
+			*thrust_force /= 480.0f;
+			*thrust_force = std::min(*thrust_force,max_thrust);		
 	}
 
 	void command_takeoff(int i, float dt)
 	{
 		reset_takeoff = false;
-//		g_statusFlight = statusTakingoff;		
+		//g_statusFlight = statusTakingoff;		
 		m_ctrl_v[i].posctrl_msg.pos_sp.x = _takeoff_Pos[i](0);
 		m_ctrl_v[i].posctrl_msg.pos_sp.y = _takeoff_Pos[i](1);
 		yawspReset(i);
@@ -1121,30 +1210,29 @@ Concensus contol of UAVs
 /*************************
 	Cmd Circling
 *************************/
-	void command_circling(int i, float dt)
+	void command_circling(float dt)
 	{
-		int count_circling = 0;
-		/*for(int i=0;i<swarm_pos.size();++i)
+		int count_circlfini = 0;
+		int N = 0;
+		for(int i=0;i<swarm_pos.size();++i)
 		{
 			m_radius_Pos[i] = sqrt(swarm_pos[i](1)*swarm_pos[i](1) + swarm_pos[i](0)*swarm_pos[i](0));
 		}
 
 		if (isFirstCircling)
 		{
-			
 			for(int i=0;i<swarm_pos.size();i++)
 			{	
-				
 				m_thetaPos[i] = atan2(swarm_pos[i](1),swarm_pos[i](0)); 
 			}
 			isFirstCircling = false;
-		}*/
-
-		//else 
-		//{		
+			N = 0;
+		}
+		else 
+		{		
 			//bool isReadyToCircle = false;
-			float circle_err = 0.05f;
-			float outWards_step = 0.05f;
+			float circle_err = 0.02f;
+			float outWards_step = 0.005f;
 			int count_ready_to_circle = 0;
 			float timeForOneCircle = 8.0f;
 			for (int i=0;i<g_vehicle_num;i++)
@@ -1156,14 +1244,30 @@ Concensus contol of UAVs
 						m_ctrl_v[i].posctrl_msg.pos_sp.x -= outWards_step*cos(m_thetaPos[i]);
 						m_ctrl_v[i].posctrl_msg.pos_sp.y -= outWards_step*sin(m_thetaPos[i]);
 						m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
+
+						/*m_ctrl_v[i].posctrl_msg.vel_ff.x = -outWards_step*cos(m_thetaPos[i])*50.0f;
+						m_ctrl_v[i].posctrl_msg.vel_ff.y = -outWards_step*sin(m_thetaPos[i])*50.0f;
+						m_ctrl_v[i].posctrl_msg.vel_ff.z = 0.0f;
+
+						m_ctrl_v[i].posctrl_msg.acc_sp.x = 0.0f;
+						m_ctrl_v[i].posctrl_msg.acc_sp.y = 0.0f;
+						m_ctrl_v[i].posctrl_msg.acc_sp.z = 0.0f;*/
+
 					}
 					else if(m_radius_Pos[i]<CIRCLING_R)
 					{
 						m_ctrl_v[i].posctrl_msg.pos_sp.x += outWards_step*cos(m_thetaPos[i]);
 						m_ctrl_v[i].posctrl_msg.pos_sp.y += outWards_step*sin(m_thetaPos[i]);
 						m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
+
+						/*m_ctrl_v[i].posctrl_msg.vel_ff.x = outWards_step*cos(m_thetaPos[i])*50.0f;
+						m_ctrl_v[i].posctrl_msg.vel_ff.y = outWards_step*sin(m_thetaPos[i])*50.0f;
+						m_ctrl_v[i].posctrl_msg.vel_ff.z = 0.0f;
+
+						m_ctrl_v[i].posctrl_msg.acc_sp.x = 0.0f;
+						m_ctrl_v[i].posctrl_msg.acc_sp.y = 0.0f;
+						m_ctrl_v[i].posctrl_msg.acc_sp.z = 0.0f;*/
 					}
-					
 				}
 				else
 				{	
@@ -1175,43 +1279,52 @@ Concensus contol of UAVs
 			
 			if(count_ready_to_circle == g_vehicle_num) //all vehicles are ready for circling..
 			{
-				if(isClockDirection)//Clock direction
-				{
-					for(int i=0;i<swarm_pos.size();i++)
-					{
-						m_thetaPos[i] += 3.1415926/(timeForOneCircle*50.0f);
-					}
-				}
-				else //Counter-Clock direction
-				{
-					for(int i=0;i<swarm_pos.size();i++)
-					{
-						m_thetaPos[i] -= 3.1415926/(timeForOneCircle*50.0f);
-					}
-				}
-				
+				++N;
+				float count_time = N*0.02f;
+				printf(" ####### N: %d ##########\n",N );
 				for(int i=0;i<swarm_pos.size();i++)
 				{
+					float step_theta = 3.1415926/(timeForOneCircle*50.0f);
+					m_thetaPos[i] += step_theta; //theta*t
 					m_ctrl_v[i].posctrl_msg.pos_sp.x = (m_radius_Pos[i])*cos(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.pos_sp.y = (m_radius_Pos[i])*sin(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;
-					printf("%f\n",m_thetaPos[i]);
-					if(m_thetaPos[i] >= 5000*3.14)
+
+					float theta = step_theta*50;
+					m_ctrl_v[i].posctrl_msg.acc_sp.x = -(m_radius_Pos[i])*theta*theta*cos(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.acc_sp.y = -(m_radius_Pos[i])*theta*theta*sin(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.acc_sp.z = 0.0f;
+
+					m_ctrl_v[i].posctrl_msg.vel_ff.x = (m_radius_Pos[i])*theta*sin(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.vel_ff.y = (m_radius_Pos[i])*theta*cos(m_thetaPos[i]);
+					m_ctrl_v[i].posctrl_msg.vel_ff.z = 0.0f;
+
+					
+					if(m_thetaPos[i] >= 5*3.14)
 					{
-						++count_circling;
+						++count_circlfini;
 					}
 				}
-				if(count_circling == g_vehicle_num)
+				if(count_circlfini == g_vehicle_num)
 				{
 					m_flight_state = Hovering;
+					isHovering = true;
+					isFirstCircling = true;
 				}
 			}
 			else
 			{
 				printf("######  %d  vehicle is ready to circle! \n",count_ready_to_circle );
 			}
-		//}			
+		}			
 		
+	}
+/*************************
+	Cmd Funny
+*************************/
+	void command_funny()
+	{
+
 	}
 /******************
 	Cmd landing
@@ -1229,186 +1342,6 @@ Concensus contol of UAVs
 		}
 
 	}
-/***********************
- Move ieme cf to a Ring
-************************/
-	void Move_oneCfOutward(int index, float Desti_Radius)
-	{
-		float desti_err = 0.05f;
-		float outWards_step = 0.05f;
-		//float DestinationCirlcle = 0;
-		//vec3f_norm(Desti_Circle,&DestinationCirlcle);
-
-		if((m_radius_Pos[index]-Desti_Radius)*(m_radius_Pos[index]-Desti_Radius)>desti_err)
-		{
-			if(m_radius_Pos[index]>Desti_Radius)
-			{	
-				m_ctrl_v[index].posctrl_msg.pos_sp.x -= outWards_step*cos(m_thetaPos[index]);
-				m_ctrl_v[index].posctrl_msg.pos_sp.y -= outWards_step*sin(m_thetaPos[index]);
-				m_ctrl_v[index].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
-			}
-			else if(m_radius_Pos[index]<Desti_Radius)
-			{
-				m_ctrl_v[index].posctrl_msg.pos_sp.x += outWards_step*cos(m_thetaPos[index]);
-				m_ctrl_v[index].posctrl_msg.pos_sp.y += outWards_step*sin(m_thetaPos[index]);
-				m_ctrl_v[index].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
-			}
-		}
-		else //hovering
-		{	
-			isHovering = true;
-			posspReset(index, &m_hover_pos);
-		}
-	}
-/*************************************
- Move index cf to dextination position
-**************************************/
-	bool MoveOneCfToPt(int index, Vector3f* Destination)
-	{
-		m_ctrl_v[index].posctrl_msg.pos_sp.x = (*Destination)(0);
-		m_ctrl_v[index].posctrl_msg.pos_sp.y = (*Destination)(1);
-		m_ctrl_v[index].posctrl_msg.pos_sp.z = (*Destination)(2);
-	}
-/************************************************************
- Move all cfs to destinated position, in an uniform formation 
-*************************************************************/
-	void SwarmCfFollowCenter(std::vector<Vector3f>* pos_center_trj, Vector3f* Destination)
-	{
-		for(int index=0;index<g_vehicle_num;++index)
-		{
-			m_ctrl_v[index].posctrl_msg.pos_sp.x = (*Destination)(0);
-			m_ctrl_v[index].posctrl_msg.pos_sp.y = (*Destination)(1);
-			m_ctrl_v[index].posctrl_msg.pos_sp.z = (*Destination)(2);
-		}
-	}
-
-/****************************************
-  Calculate the position center of swarm
-*****************************************/
-	void posCenterOfSwarm(std::vector<Vector3f>* swarm, int* index_of_C, Vector3f* Center_pt)
-	{
-		Vector3f pos_sum;
-		pos_sum.setZero();
-		for (int i=0;i<swarm->size();++i)
-		{
-			for(int j=0;j<3;++j)
-			{
-				pos_sum(j) += (*swarm)[i](j);
-			}
-		}
-		for(int j=0;j<3;++j)
-		{
-			(*Center_pt)(j) = pos_sum(j)/swarm->size();
-		}
-		
-		float min_distance = dist_two_pts(&(*swarm)[0],Center_pt);
-
-		for(int i=0;i<swarm->size();++i)
-		{
-			 if(dist_two_pts(&(*swarm)[i],Center_pt)<min_distance)
-			 {
-			 	min_distance = dist_two_pts(&(*swarm)[i],Center_pt);
-			 	*index_of_C = i;
-			 }
-		}
-
-		*Center_pt = (*swarm)[*index_of_C];
-	}
-
-	bool isReached_Destin(Vector3f* pos_estimation, Vector3f* destination, float threshold)
-	{
-		return dist_two_pts(destination,pos_estimation)<threshold;
-	}
-
-
-	void unite(vector<float> &x_init_pos,vector<float> &y_init_pos,vector<float> &x_marker_pos,vector<float> &y_marker_pos)
-	{
-		vector<bool> all_union(x_marker_pos.size(),0);
-
-		for(int i=0;i<x_marker_pos.size();++i)//kick out noise
-		{
-		    int within_circle = 0;
-			for(int j=0;j<x_marker_pos.size();++j)
-			{
-				if(sqrt((x_marker_pos[i]-x_marker_pos[j])*(x_marker_pos[i]-x_marker_pos[j])+(y_marker_pos[i]-y_marker_pos[j])*(y_marker_pos[i]-y_marker_pos[j]))<ABOUT_EDGE)
-					++within_circle;
-			}
-			if(within_circle<3)
-				all_union[i]=1;
-		}
-		for(int i=0;i<x_marker_pos.size();++i)//choose the first point
-		{
-			if(all_union[i])continue;
-			all_union[i]=1;
-			vector<int> num_of_point(2,-1);
-			vector<float> min_dstc(3,-1);
-
-		    float temp_dstc;
-		    for(int j=1;j<x_marker_pos.size();++j)//find the nearest point
-		    {
-		    	if(all_union[j])continue;
-		    	temp_dstc=(x_marker_pos[i]-x_marker_pos[j])*(x_marker_pos[i]-x_marker_pos[j])+(y_marker_pos[i]-y_marker_pos[j])*(y_marker_pos[i]-y_marker_pos[j]);
-		    	if(min_dstc[0]>temp_dstc||min_dstc[0]<0)
-		    	{
-		    		num_of_point[0]=j;
-		    		min_dstc[0]=temp_dstc;
-		    	}
-		    }
-		    all_union[num_of_point[0]]=1;
-		    for(int j=1;j<x_marker_pos.size();++j)//find the second nearest point
-		    {
-		    	if(all_union[j])continue;
-		    	temp_dstc=(x_marker_pos[i]-x_marker_pos[j])*(x_marker_pos[i]-x_marker_pos[j])+(y_marker_pos[i]-y_marker_pos[j])*(y_marker_pos[i]-y_marker_pos[j]);
-		    	if(min_dstc[1]>temp_dstc||min_dstc[1]<0)
-		    	{
-		    		num_of_point[1]=j;
-		    		min_dstc[1]=temp_dstc;
-		    	}
-		    }
-		    all_union[num_of_point[1]]=1;
-		    min_dstc[2]=(x_marker_pos[num_of_point[1]]-x_marker_pos[num_of_point[0]])*(x_marker_pos[num_of_point[1]]-x_marker_pos[num_of_point[0]])+(y_marker_pos[num_of_point[1]]-y_marker_pos[num_of_point[0]])*(y_marker_pos[num_of_point[1]]-y_marker_pos[num_of_point[0]]);
-            
-            float max_dstc;   
-		    int num_of_max_dstc1,num_of_max_dstc2; 
-		    if(min_dstc[0]>min_dstc[1])//find the farthest two points
-		    {
-                num_of_max_dstc1=i;
-                num_of_max_dstc2=num_of_point[0];
-                max_dstc=min_dstc[0];
-		    }
-		    else{
-		    	num_of_max_dstc1=i;
-                num_of_max_dstc2=num_of_point[1];
-                max_dstc=min_dstc[1];
-		    }
-		    if(max_dstc<min_dstc[2])
-		    {
-		    	num_of_max_dstc1=num_of_point[0];
-                num_of_max_dstc2=num_of_point[1];
-		    }
-
-		    temp_dstc=x_marker_pos[num_of_max_dstc1]+x_marker_pos[num_of_max_dstc2];//calculate the centre point
-		    x_init_pos.push_back(temp_dstc/2);
-		    temp_dstc=y_marker_pos[num_of_max_dstc1]+y_marker_pos[num_of_max_dstc2];
-		    y_init_pos.push_back(temp_dstc/2);
-
-		    for(int j=1;j<x_marker_pos.size();++j)//find and kick out the forth point, if cant find, it doesnt matter
-		    {
-		    	if(all_union[j])continue;
-		    	float cross_product,len_1,len_2;
-		    	len_1=sqrt((x_marker_pos[num_of_max_dstc1]-x_marker_pos[j])*(x_marker_pos[num_of_max_dstc1]-x_marker_pos[j])+(y_marker_pos[num_of_max_dstc1]-y_marker_pos[j])*(y_marker_pos[num_of_max_dstc1]-y_marker_pos[j]));
-		    	len_2=sqrt((x_marker_pos[num_of_max_dstc2]-x_marker_pos[j])*(x_marker_pos[num_of_max_dstc2]-x_marker_pos[j])+(y_marker_pos[num_of_max_dstc2]-y_marker_pos[j])*(y_marker_pos[num_of_max_dstc2]-y_marker_pos[j]));
-		    	cross_product=(x_marker_pos[num_of_max_dstc2]-x_marker_pos[j])*(x_marker_pos[num_of_max_dstc1]-x_marker_pos[j])+(y_marker_pos[num_of_max_dstc2]-y_marker_pos[j])*(y_marker_pos[num_of_max_dstc1]-y_marker_pos[j]);
-		    	float cos_degree=cross_product/len_1/len_2;
-		    	if(cos_degree<0.08 && cos_degree>-0.08)
-		    	{
-		    		all_union[j]=1;
-		    		break;
-		    	}
-		    }
-		}
-	}
-
 };
 
 int main(int argc, char **argv)
@@ -1429,3 +1362,4 @@ int main(int argc, char **argv)
 
 
 }
+
