@@ -1,3 +1,0 @@
-geometry_msgs/Vector3Stamped pos_est
-geometry_msgs/Vector3Stamped vel_est
-float32 yaw_est

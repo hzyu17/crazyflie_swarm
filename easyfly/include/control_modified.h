@@ -7,34 +7,32 @@
 #include "IIR.h"
 
 using namespace Eigen;
-
 class Controller
 {
 public:
 	Controller()
 	: loop_record(0)
 	, m_group_index(0)
-	, m_resFnameRoot("/home/lucasyu/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/vehicle0/")
-		,m_pidX(6.5, 0.0, 1.0, 10.0, 0.0, -1e6, 1e6, -0.3, 0.3) //kp, kd, ki, kpp, ff, minOutput, maxOutput, integratorMin, integratorMax;
-		,m_pidY(6.5, 0.0, 1.0, 10.0, 0.0, -1e6, 1e6, -0.3, 0.3)
-		//,m_pidZ( 5000.0, 6000.0, 3500.0, 2.0, 0.5, 1000.0, 60000.0, -1000.0, 1000.0)
-		,m_pidZ(6.5, 0.0, 2.0, 10.0, 0.0, -1e6, 1e6, -2, 2)
+	, m_resFnameRoot("/home/walt/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/vehicle0/")
+		,m_pidX(160.0, 0.5, 2.0, 2.5, 0.0, -1e6, 1e6, -0.3, 0.3) //kp, kd, ki, kpp, ff, minOutput, maxOutput, integratorMin, integratorMax;
+		,m_pidY(160.0, 0.5, 2.0, 2.5, 0.0, -1e6, 1e6, -0.3, 0.3)//kp 22 kd 1.8 ki 2.0 kpp 7
+		//,m_pidZ( 5000.0,6000.0, 3500.0, 2.0, 0.5, 1000.0, 60000.0, -1000.0, 1000.0)
+		,m_pidZ(170.0, 1.65, 5.0, 5.0, 0.0, -1e6, 1e6, -2, 2)//kpp 3
 
-		,m_pidVx( 1.0, 0.0, 0.0, 0.4, 0.0, -0.8, 0.8, -0.2, 0.2)
+		/*,m_pidVx( 1.0, 0.0, 0.0, 0.4, 0.0, -0.8, 0.8, -0.2, 0.2)
 		,m_pidVy( 1.0, 0.0, 0.0, 0.4, 0.0, -0.8, 0.8, -0.2, 0.2)
 		,m_pidVz( 1.0, 0.0, 0.0, 2.0, 0.0, -2, 50, -2, 2)
 
 		,m_pidRoll(1.0, 0.2, 0.8, 0.2, 0.6, -0.05, 0.05, -0.3, 0.3)
 		,m_pidPitch(1.0, 0.2, 0.8, 0.2 , 0.6, -0.0, 0.0, -0.0, 0.0)
-		,m_pidYaw(1.0, 1.0, 0.2, 0.2, 0.2, -0, 0, 0.0, 0.0)
+		,m_pidYaw(1.0, 1.0, 0.2, 0.2, 0.2, -0, 0, 0.0, 0.0)*/
 		//,m_pidYaw(-2.0, -2.0, 0.0, 2.0, 0.6, -2.0, 2.0, 0.0, 0.0)
-
+		, l_yawSp(0.0f)
+		, yaw_deriv(0.0f)
 		, initAcc_IIR(true)
 		, initGyro_IIR(true)
-		, yaw_deriv(0.0f)
-		, l_yawSp(0.0f)
-
 	{
+
 	 vel_estIMU.setZero();
 	 vel_Sp.setZero();
 	 vel_estVicon.setZero();
@@ -60,16 +58,15 @@ public:
 
 	 acc_Sp_net.setZero();
 
-	 _R_des.setZero();
+	 //_R_des.setZero();
 	 RPY_sp.setZero();
 	 RPY_des.setZero();
 	 m_pidX.reset();
 	 m_pidY.reset();
 	 m_pidZ.reset();
-	 m_pidVx.reset();
+	 /*m_pidVx.reset();
 	 m_pidVy.reset();
-	 m_pidVz.reset();
-
+	 m_pidVz.reset();*/
 
 	 m_velSpIIRx.reset();
 	 m_velSpIIRy.reset();
@@ -101,7 +98,7 @@ protected:
 	//att:
 	Vector3f  e_R;
 	Vector3f _Zb_des, _Xc_des, _Yb_des, _Xb_des, Thrust_des;//, F_des
-
+	std::vector<MatrixXf> PID_v;
 	Vector3f RPY_sp, RPY_des;
 	Matrix3f _R_des, R_est;
 
@@ -114,13 +111,14 @@ protected:
 	PID m_pidX;
 	PID m_pidY;
 	PID m_pidZ;
-	PID m_pidVx;
+
+	/*PID m_pidVx;
 	PID m_pidVy;
 	PID m_pidVz;
 
 	PID m_pidRoll;
 	PID m_pidPitch;
-	PID m_pidYaw;
+	PID m_pidYaw;*/
 	ros::Publisher m_pos_sppub, m_posEstPub, m_attSpPub;
 	bool initAcc_IIR, initGyro_IIR;
 
@@ -134,7 +132,7 @@ protected:
 	{
 		lacc_est_IMU = *acc_est_IMU;
 	}*/
-	void control_nonLineaire(const Vector3f* pos_est_Vicon, Vector4f* Sp, Vector3f* Vel_ff, Vector3f* acc_Sp, Vector4f* Output, Vector3f* acc_est_IMU, Vector3f* Euler, float dt);
+	void control_nonLineaire(M_recording* m_recording, const Vector3f* pos_est_Vicon, Vector4f* Sp, Vector3f* Vel_ff, Vector3f* acc_Sp, Vector4f* Output, Vector3f* acc_est_IMU, Vector3f* Euler, float dt);
 	// {	
 	// 	if(dt<0.1f)
 	// 	{
