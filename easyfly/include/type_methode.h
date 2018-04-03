@@ -68,4 +68,9 @@ Vector3f vec3f_minus(Vector3f* a, Vector3f* b);
 
 float dist_two_pts(Vector3f* a, Vector3f* b);
 
+float m_power_f(float a, int b);
+
+Vector3f vec3f_shift(Vector3f* origin, Vector3f* delta);
+
+
 #endif

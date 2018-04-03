@@ -308,7 +308,7 @@ void vec3f_angle(Vector3f* a, Vector3f* b, float* angleInRad)
 	float norm_a, norm_b;
 	vec3f_norm(a,&norm_a);
 	vec3f_norm(b,&norm_b);
-	*angleInRad = acos(vec3f_dot(a,b)/(norm_a*norm_b));
+	*angleInRad = acos(vec3f_dot(a,b)/(norm_a*norm_b)); //range--[0:PI]
 }
 bool IsUAVForm(Vector3f* a, Vector3f*b)
 {
@@ -358,4 +358,36 @@ float dist_two_pts(Vector3f* a, Vector3f* b)
 	difference.setZero();
 	difference = vec3f_minus(a,b);
 	return vec3f_length(&difference);
+}
+
+Vector3f vec3f_shift(Vector3f* origin, Vector3f* delta)
+{	
+	Vector3f re;
+	re.setZero();
+	for(int i=0;i<3;++i)
+	{
+		re(i) = (*origin)(i)+(*delta)(i);
+	}
+	return re;
+}
+
+float m_power_f(float a, int b)
+{
+	if(b==0)
+	{
+		return 1;
+	}
+	else if(a==1)
+	{
+		return 1;
+	}
+	else
+	{
+		a = 1;
+		for(int i=0;i<b;++i)
+		{
+			a = a*a;
+		}
+		return a;
+	}
 }
