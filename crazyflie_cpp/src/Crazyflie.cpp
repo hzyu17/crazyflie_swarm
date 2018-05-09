@@ -279,6 +279,25 @@ void Crazyflie::setParam(uint8_t id, const ParamValue& value) {
 
 
 }
+bool Crazyflie::sendPacketNoAck(
+  const uint8_t* data,
+  uint32_t length)
+{
+  std::unique_lock<std::mutex> mlock(g_mutex[m_devId]);
+  if (m_radio->getAddress() != m_address) {
+    m_radio->setAddress(m_address);
+  }
+  if (m_radio->getChannel() != m_channel) {
+    m_radio->setChannel(m_channel);
+  }
+  if (m_radio->getDatarate() != m_datarate) {
+    m_radio->setDatarate(m_datarate);
+  }
+  if (m_radio->getAckEnable()) {
+    m_radio->setAckEnable(false);
+  }
+  m_radio->sendPacketNoAck(data, length);
+}
 
 bool Crazyflie::sendPacket(
   const uint8_t* data,

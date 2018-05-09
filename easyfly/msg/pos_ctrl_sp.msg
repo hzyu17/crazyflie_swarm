@@ -1,7 +1,12 @@
+Header header
+int32 State_index
+int32 count_training
 geometry_msgs/Vector3 pos_sp
 geometry_msgs/Vector3 vel_sp
 geometry_msgs/Vector3 vel_ff
 geometry_msgs/Vector3 acc_sp
+geometry_msgs/Vector3 vel_end
 float32 yaw_sp
 float32 roll_sp
 float32 pitch_sp
+float32 T

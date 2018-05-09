@@ -3,9 +3,6 @@
 #include <iostream>
 #include <vector>
 #include <sensor_msgs/Joy.h>
-//#include <sensor_msgs/Imu.h>
-//#include <sensor_msgs/MagneticField.h>
-//#include <sensor_msgs/>
 #include <tf/transform_listener.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/Twist.h>
@@ -16,6 +13,10 @@
 #include <easyfly/trj_ctrl_sp.h>
 #include <easyfly/pos_est.h>	
 #include <easyfly/att_est.h>
+#include <easyfly/Recording.h>
+#include <easyfly/output.h>
+#include <easyfly/Learning.h>
+#include <easyfly/vicon_markernum.h>
 #include <vicon_bridge/Markers.h>
 #include <vicon_bridge/Marker.h>
 #include "commons.h"
@@ -29,11 +30,12 @@
 #include <opencv2/imgproc.hpp>
 
 
-int g_vehicle_num=1;
+int g_vehicle_num=1;	
 int g_joy_num=1;
+int g_flight_mode;
 const int DimOfVarSpace = 2;
 const float max_thrust = 0.5827*1.3;
-
+float FREQUENCY = 50.0f;
 using namespace Eigen;
 using namespace std;
 using namespace cv;
@@ -59,14 +61,16 @@ void clear_index()
 class Commander
 {
 private:
-	std::vector<ros::Publisher> m_rawpub_v, m_pospub_v, m_trjpub_v, m_pos_est_v;
+	std::vector<ros::Publisher> m_rawpub_v, m_pospub_v, m_trjpub_v, m_pos_est_v, m_outputpub, m_vicon_markernumpub;
 	ros::Publisher m_cmdpub;
 	ros::Subscriber m_viconMarkersub;
-	std::vector<ros::Subscriber> m_joysub_v, m_estsub_v, m_estyawsub_v,m_imusub_v;
+	std::vector<ros::Subscriber> m_joysub_v, m_estsub_v, m_estyawsub_v,m_imusub_v,m_recordingsub,m_attdiffsub_v,m_veldiffsub_v,m_countTrainsub_v;
 	std::vector<vicon_bridge::Marker> m_markers;
 	//std::vector<MatrixXf> m_Connection_Matrix;
 	MatrixXf m_Connection_Matrix;
-
+	/******************
+	landing params
+	*******************/
 	bool takeoff_switch;
 	bool takeoff_condition;
 	float takeoff_objective_height;
@@ -74,8 +78,8 @@ private:
 	float takeoff_low_rate;
 	float takeoff_high_rate;
 	float m_landspeed;
-	float m_landsafe;
-	std::vector<float> m_thetaPos, m_radius_Pos;
+	float m_landsafe;  
+	std::vector<float> m_thetaPos, m_radius_Pos, m_thetaPosS1, m_radius_PosS1;
 	std::vector<float> yaw_bias;//walt
 	bool yaw_manuel_ready;//walt
 
@@ -88,6 +92,8 @@ private:
 	float m_land_switch_idle;
 	bool isGotAtt, isGotPos, isFirstPos, isFirsrAtt, isFirstCircling, isHovering;
 	float m_gamma;
+
+
 	//For sequence initialization
 	Mat src = Mat(Size(1000,1000), CV_8UC3, Scalar(0));
 
@@ -95,7 +101,10 @@ private:
 	//MODE_POS 1
 	//MODE_TRJ 2
 	int m_flight_state;
+	int m_fl_state_after_hover;
 	float m_hovering_time;
+	float m_hover_duration;
+
 //	float m_velff_xy_P, m_velff_z_P;
 	struct M_Joy
 	{
@@ -118,10 +127,31 @@ private:
 	std::vector<Vector3f> m_gyro_est_v;
 	std::vector<Vector3f> swarm_pos;
 	std::vector<Vector3f> m_hover_pos;
+	std::vector<Vector4f> m_attoutput;
 	std::vector<Vector3f> swarm_pos_predict;//records prediction based on last time position, error, and velocity
 	std::vector<Vector3f> swarm_pos_err;//records position error for correction
 	std::vector<Vector3f> swarm_pos_step;//records step(only velocity) from last two positions.
 	std::vector<Vector3f> swarm_vel; //swarm velocity estimation for consensus control
+	
+
+/**********************
+state to state planning
+**********************/
+	std::vector<std::vector<std::vector<float>>> m_state_opti_posS1;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_velS1;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_accS1;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_attS1;
+
+	std::vector<std::vector<std::vector<float>>> m_state_opti_posS2;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_velS2;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_accS2;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_attS2;
+
+	std::vector<std::vector<std::vector<float>>> m_state_opti_posS3;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_velS3;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_accS3;
+	std::vector<std::vector<std::vector<float>>> m_state_opti_attS3;
+
 	ros::Time m_last_time_vicon;
 	ros::Time m_this_time_vicon; 
 	std::vector<Vector3f> m_swarm_pos;//the modifiable version of swarm_pos
@@ -129,18 +159,34 @@ private:
 	std::vector<Vector3f> _takeoff_Pos;
 	Vector3f m_vel_ff, m_acc_sp,  m_last_rateSp;
 	easyfly::pos_est m_pos_estmsg;
+	easyfly::output m_output;
 
+/***************
+learning params
+****************/
+	float m_gamma_theta;
+	float m_gamma_vel;
+	int m_count_state;
+	int m_count_training;
+	float m_T1, m_T2, m_T3, m_lenS1, m_vel_desNorm;
+	bool isFirstS1,isFirstS2,isFirstS3,isNewTrain;
+	std::vector<Vector3f> swarm_vel_err, swarm_att_err;
 	float z_ground;
 
 public:
 	Commander(ros::NodeHandle& nh)
 	:m_rawpub_v(g_vehicle_num)
 	,m_imusub_v(g_vehicle_num)
+	,m_attdiffsub_v(g_vehicle_num)
+	,m_veldiffsub_v(g_vehicle_num)
 	,m_pospub_v(g_vehicle_num)
 	,m_trjpub_v(g_vehicle_num)
+	,m_vicon_markernumpub(g_vehicle_num)
 	,m_joysub_v(g_joy_num)
 	,m_estsub_v(g_vehicle_num)
 	,m_estyawsub_v(g_vehicle_num)
+	,m_recordingsub(g_vehicle_num)
+	,m_countTrainsub_v(g_vehicle_num)
 	,m_joy_v(g_joy_num)
 	,m_ctrl_v(g_vehicle_num)
 	,m_est_v(g_vehicle_num)
@@ -148,9 +194,24 @@ public:
 	,m_gyro_est_v(g_vehicle_num)
 	,m_pos_est_v(g_vehicle_num)
 	,yaw_bias(g_vehicle_num)//walt
+	,m_state_opti_posS1(g_vehicle_num)
+	,m_state_opti_velS1(g_vehicle_num)
+	,m_state_opti_accS1(g_vehicle_num)
+	,m_state_opti_attS1(g_vehicle_num)
+	,m_state_opti_posS2(g_vehicle_num)
+	,m_state_opti_velS2(g_vehicle_num)
+	,m_state_opti_accS2(g_vehicle_num)
+	,m_state_opti_attS2(g_vehicle_num)
+	,m_state_opti_posS3(g_vehicle_num)
+	,m_state_opti_velS3(g_vehicle_num)
+	,m_state_opti_accS3(g_vehicle_num)
+	,m_state_opti_attS3(g_vehicle_num)
+	,m_attoutput(g_vehicle_num)
 	,swarm_pos(0)
 	,m_hover_pos(g_vehicle_num)
 	,swarm_vel(g_vehicle_num)
+	,swarm_vel_err(g_vehicle_num)
+	,swarm_att_err(g_vehicle_num)
 	,m_cmd_msg()
 	,takeoff_switch(false)
 	,yaw_manuel_ready(false)//walt
@@ -163,6 +224,10 @@ public:
 	,isFirsrAtt(true)
 	,isFirstCircling(true)
 	,isHovering(false)
+	,isFirstS1(true)
+	,isFirstS2(true)
+	,isFirstS3(true)
+	,isNewTrain(false)
 	,takeoff_objective_height(1.2f)
 	,takeoff_safe_distance(0.0f)
 	,takeoff_low_rate(0.2f)
@@ -170,14 +235,27 @@ public:
 	,reset_takeoff(false)
 	,m_landspeed(0.2f)
 	,m_thetaPos(g_vehicle_num)
+	,m_thetaPosS1(g_vehicle_num)
 	,m_radius_Pos(g_vehicle_num)
+	,m_radius_PosS1(g_vehicle_num)
 	,m_land_switch_idle(0.1f)
 	,m_takeoff_switch_Auto(0.2f)
 	,m_takeoff_switch_Hover(0.2f)
 	,m_hovering_time(0)
+	,m_hover_duration(-1)
 	,m_Connection_Matrix(g_vehicle_num,g_vehicle_num)
 	,m_gamma(0.5)
+	,m_gamma_theta(0.5)
+	,m_gamma_vel(0.5)
+	,m_count_state(0)
+	,m_count_training(0)
+	,m_T1(0.3f)
+	,m_T2(0.4f)
+	,m_T3(0.3f)
+	,m_lenS1(1.5f)
+	,m_vel_desNorm(3.0f)
 	{
+		//printf("entering commander!!");
 		m_vel_ff.setZero();
 		m_acc_sp.setZero();
 		//_takeoff_Pos.setZero();
@@ -185,6 +263,22 @@ public:
 		m_last_time_vicon = ros::Time::now();
 		m_this_time_vicon = ros::Time::now();
 		m_flight_state = Idle;
+		m_fl_state_after_hover = Hovering;
+		for(int i=0;i<g_vehicle_num;++i)
+		{
+			m_state_opti_posS1[i].resize(3);
+			m_state_opti_velS1[i].resize(3);
+			m_state_opti_accS1[i].resize(3);
+			m_state_opti_attS1[i].resize(3);
+			m_state_opti_posS2[i].resize(3);
+			m_state_opti_velS2[i].resize(3);
+			m_state_opti_accS2[i].resize(3);
+			m_state_opti_attS2[i].resize(3);
+			m_state_opti_posS3[i].resize(3);
+			m_state_opti_velS3[i].resize(3);
+			m_state_opti_accS3[i].resize(3);
+			m_state_opti_attS3[i].resize(3);
+		}
 		/*for(int i=0;i<2;++i) //2 control variables
 		{
 			MatrixXf temp(g_vehicle_num,g_vehicle_num);
@@ -193,7 +287,7 @@ public:
 		char msg_name[50];
 		m_cmd_msg.cut = 0;
 		m_cmd_msg.flight_state = Idle;
-		m_cmd_msg.l_flight_state = Idle;
+		
 		m_cmdpub = nh.advertise<easyfly::commands>("/commands",1);
 		for(int i=0;i<g_vehicle_num;i++){
 			sprintf(msg_name,"/vehicle%d/raw_ctrl_sp",i);
@@ -203,6 +297,15 @@ public:
 			sprintf(msg_name,"/vehicle%d/trj_ctrl_sp",i);
 			m_trjpub_v[i] = nh.advertise<easyfly::trj_ctrl_sp>(msg_name, 1);
 
+			sprintf(msg_name, "/vehicle%d/marker_number",i);
+			m_vicon_markernumpub[i] = nh.advertise<easyfly::vicon_markernum>(msg_name, 1);
+
+			sprintf(msg_name, "/vehicle%d/vel_difference",i);
+			m_veldiffsub_v[i] = nh.subscribe<geometry_msgs::Vector3>(msg_name,5,boost::bind(&Commander::vel_diffCallback,this, _1, i));
+
+			sprintf(msg_name, "/vehicle%d/att_difference",i);
+			m_attdiffsub_v[i] = nh.subscribe<geometry_msgs::Vector3>(msg_name,5,boost::bind(&Commander::att_diffCallback,this, _1, i));
+
 			sprintf(msg_name,"/vehicle%d/tf_prefix/Imu",i);
 			m_imusub_v[i] = nh.subscribe<sensor_msgs::Imu>(msg_name,5,boost::bind(&Commander::imuCallback, this, _1, i));
 
@@ -211,8 +314,13 @@ public:
 
 			m_viconMarkersub = nh.subscribe<vicon_bridge::Markers>("/vicon/markers",5,&Commander::vicon_markerCallback, this);
 
+			sprintf(msg_name,"/vehicle%d/Recording",i); //recording data)
+			m_recordingsub[i] = nh.subscribe<easyfly::Recording>(msg_name,5,boost::bind(&Commander::recordingCallback, this, _1, i));
+	
 			sprintf(msg_name,"/vehicle%d/pos_est", i); 
-			m_pos_est_v[i] = nh.advertise<easyfly::pos_est>(msg_name, 5);
+			m_pos_est_v[i] = nh.advertise<easyfly::pos_est>(msg_name, 1000);
+			m_ctrl_v[i].posctrl_msg.State_index = 0;
+			
 		}
 		for(int i=0;i<g_joy_num;i++){
 			sprintf(msg_name,"/joygroup%d/joy",i);
@@ -223,7 +331,7 @@ public:
 	void run(double frequency)
 	{
 		ros::NodeHandle node;
-		node.getParam("flight_mode", m_flight_mode);
+		m_flight_mode = g_flight_mode;
 
 		char msg_name[50];
 		/*for(int i=0;i<g_vehicle_num;i++){
@@ -234,7 +342,6 @@ public:
 	}
 	void iteration(const ros::TimerEvent& e)
 	{	
-
 		static float time_elapse = 0;
 		_dt_deriv = e.current_real.toSec() - e.last_real.toSec();
 		time_elapse += _dt_deriv;
@@ -284,6 +391,12 @@ public:
 							m_flight_state = Landing;
 						}
 					}
+
+					else if(m_flight_state == Hovering && m_joy_v[0].changed_arrow[1] == true && m_joy_v[0].curr_arrow[0] == 1) //begin S1
+					{
+						m_flight_state = toBeReadyForBigRoll;
+						printf("-------------go to the beginning point!!----------------\n");
+					}
 					
 					switch(m_flight_state){
 						case Idle:{
@@ -308,11 +421,25 @@ public:
 								float yaw_move_rate = m_joy_v[i].axes[2] * 20 * DEG2RAD;
 								m_ctrl_v[i].posctrl_msg.yaw_sp += yaw_move_rate;
 								//m_pospub_v[i].publish(m_ctrl_v[i].posctrl_msg);
-
 							}
 							break;
 						}
-						
+						case toBeReadyForBigRoll:{
+							command_to_start_roll(0);
+							break;
+						}
+						case TwostateTrj_S1:{ //big roll S1 planning
+							Cmd_stateTrj_S1();
+							break;
+						}
+						case TwostateTrj_S2:{
+							Cmd_stateTrj_S2();
+							break;
+						}
+						case TwostateTrj_S3:{
+							Cmd_stateTrj_S3();
+							break;
+						}
 						case TakingOff:{			
 							//printf("takeof!\n");				
 							if(!isFirstVicon && isGotAtt)
@@ -320,17 +447,20 @@ public:
 								int count_hovering_num = 0;
 								for(int i=0;i<g_vehicle_num;i++){
 									command_takeoff(i,_dt_deriv);
-									if(swarm_pos[i](2) > takeoff_objective_height - m_takeoff_switch_Hover)// + m_takeoff_switch_Hover)
+									if(swarm_pos[i](2) > takeoff_objective_height - m_takeoff_switch_Hover)
 	    							{
 	    								++count_hovering_num;
 	    							}
 	    							if(count_hovering_num == g_vehicle_num)
 	    							{
-	    								isHovering = true;
-	    								m_flight_state = Hovering;
+	    								//hover_toujour();
+										//set_hover(5.0,toBeReadyForBigRoll);
+										//set_hover(5.0,Circling);
+										set_hover(-1,Hovering); //test for 14 drones
 	    							}
 								}
 							}
+
 							break;
 						}
 						case Landing:{
@@ -342,20 +472,31 @@ public:
 						
 						case Hovering:
 						{	
-							if(m_hovering_time>=10.0f)
+							if(m_hover_duration!=-1) // hover for a given duration
 							{
-								printf("####Already hover over 10 second!!!###\n");
-								m_flight_state = Circling;//test circle control
-								m_hovering_time = 0.0f;
+								if(m_hovering_time>=m_hover_duration)
+								{
+									printf("####Already hover over %f second!!!###, entering state:  %d \n",m_hover_duration,m_fl_state_after_hover);
+									//m_flight_state = Circling;//test circle control
+									m_flight_state = m_fl_state_after_hover;
+									m_hovering_time = 0.0f;
+									m_hover_duration = -1;
+								}
+								ros::Time begin_hovering = ros::Time::now();
+								for(int i=0;i<g_vehicle_num;++i)
+								{	
+									posspReset(i, &m_hover_pos);
+								}
+								ros::Time after_hovering = ros::Time::now();
+								ros::Duration d = after_hovering - begin_hovering;
+								m_hovering_time += _dt_deriv;
 							}
-							ros::Time begin_hovering = ros::Time::now();
-							for(int i=0;i<g_vehicle_num;++i)
-							{	
-								posspReset(i, &m_hover_pos);
+							else{ //hover without a change of state
+								for(int i=0;i<g_vehicle_num;++i)
+								{	
+									posspReset(i, &m_hover_pos);
+								}
 							}
-							ros::Time after_hovering = ros::Time::now();
-							ros::Duration d = after_hovering - begin_hovering;
-							m_hovering_time += _dt_deriv;
 							break;
 						}
 						
@@ -366,7 +507,6 @@ public:
 							}
 							break;
 						}
-
 						case Funny:{
 							break;
 						}
@@ -377,7 +517,7 @@ public:
 					}
 				}//end case posctrl mode
 				break;
-				case MODE_TRJ:{
+				case MODE_TRJ:{ 
 					
 				}
 				break;
@@ -387,7 +527,7 @@ public:
 		}//end of cut off case
 		m_cmd_msg.flight_state = m_flight_state;
 		m_cmdpub.publish(m_cmd_msg);
-		m_cmd_msg.l_flight_state = m_flight_state;
+		
 	}
 
 	void posspReset(int index, std::vector<Vector3f>* ResetPos)
@@ -400,7 +540,7 @@ public:
 
 		m_ctrl_v[index].posctrl_msg.vel_ff.x = 0.0f;
 		m_ctrl_v[index].posctrl_msg.vel_ff.y = 0.0f;
-		m_ctrl_v[index].posctrl_msg.vel_ff.z = 0.0f;
+		m_ctrl_v[index].posctrl_msg.vel_ff.z = 0.0f;	
 		m_last_rateSp.setZero();
 
 		m_ctrl_v[index].posctrl_msg.acc_sp.x = 0.0f;
@@ -417,6 +557,21 @@ public:
 		//m_ctrl_v[index].posctrl_msg.yaw_sp = m_att_est_v[index].Yaw_est;
 
 	}
+	void set_hover(float hovering_time, int next_flight_state)
+	{
+		m_hover_duration = hovering_time;
+		isHovering = true;
+		m_flight_state = Hovering;
+		m_fl_state_after_hover = next_flight_state;
+	}
+
+	void hover_toujour()
+	{
+		isHovering = true;
+		m_hover_duration = -1;
+		m_flight_state = Hovering;
+	}
+
 	void joyCallback(const sensor_msgs::Joy::ConstPtr& joy, int joy_index)
 	{
 		//0 PosCtrl, 1 AttCtrl
@@ -458,6 +613,20 @@ public:
 		for(int i=0;i<2;i++){
 			l_arrow[joy_index][i] = m_joy_v[joy_index].curr_arrow[i];
 		}
+	}
+
+	void vel_diffCallback(const geometry_msgs::Vector3::ConstPtr& msg, int index)
+	{
+		swarm_vel_err[index](0) = msg->x;
+		swarm_vel_err[index](1) = msg->y;
+		swarm_vel_err[index](2) = msg->z;
+	}
+
+	void att_diffCallback(const geometry_msgs::Vector3::ConstPtr& msg, int index)
+	{
+		swarm_att_err[index](0) = msg->x;
+		swarm_att_err[index](1) = msg->y;
+		swarm_att_err[index](2) = msg->z;
 	}
 
 //For sequence intialization
@@ -653,10 +822,13 @@ public:
 	
 	void vicon_markerCallback(const vicon_bridge::Markers::ConstPtr& msg)
 	{	
+		// ros::Time t_entering_cb = ros::Time::now();
 		m_markers = msg->markers;
 		
 		if(isFirstVicon && msg->markers.size() != 0)
 		{	
+			m_last_time_vicon = ros::Time::now();
+			m_this_time_vicon = ros::Time::now();
 			for (auto& Marker : m_markers)
     		{		
     			//printf("hhhh");
@@ -683,6 +855,8 @@ public:
 				destroyWindow("vicon_test");
 				//printf("%d\n", index_sequence.size());
 				/*check the click times and exit the initialization*/
+				printf("sequence_size:  %d ",index_sequence.size());
+				fflush(stdout);
 				if(index_sequence.size()==g_vehicle_num){
 					sequenceIsOk = true;
 				}else{
@@ -781,6 +955,9 @@ public:
 	    		}//j
 	    		//printf("**********close_points : %d\n", close_points.size());
 	    		/*condition 1 to 4*/
+	    		easyfly::vicon_markernum mk_num_msg;
+	    		mk_num_msg.vicon_marker_number = close_points.size();
+	    		m_vicon_markernumpub[i].publish(mk_num_msg);
 	    		if (close_points.size() >= 4 && close_points.size() <= 4*g_vehicle_num) //condition 4
 	    		{
 	    			bool FoundVehicle_i = false;
@@ -820,7 +997,7 @@ public:
 				    				float len_q;
 				    				vec3f_norm(&consider_vec[q], &len_q);
 				    				float ctheta = (consider_vec[p](0)*consider_vec[q](0)+consider_vec[p](1)*consider_vec[q](1)+consider_vec[p](2)*consider_vec[q](2))/(len_p*len_q);
-			    					if (ctheta < 0.2 && len_q/len_p < 1.05 && len_q/len_p > 1.05)
+			    					if (ctheta < 0.2 && (len_q/len_p < 1.05 && len_q/len_p > 0.95))
 			    					{
 			    						//printf("condition 1\n");
 			    						Vector3f tmp_pos;
@@ -996,8 +1173,17 @@ public:
 				m_pos_estmsg.pos_est.y = swarm_pos[i](1);
 				m_pos_estmsg.pos_est.z = swarm_pos[i](2);
 				m_pos_estmsg.vehicle_index = i;
+				m_this_time_vicon = ros::Time::now();
+				float dt = (m_this_time_vicon - m_last_time_vicon).toSec();
+				m_pos_estmsg.vel_est.x = swarm_pos_step[i](0)/dt;
+				m_pos_estmsg.vel_est.y = swarm_pos_step[i](1)/dt;
+				m_pos_estmsg.vel_est.z = swarm_pos_step[i](2)/dt;
+				m_last_time_vicon = m_this_time_vicon;
+				m_pos_estmsg.header.stamp = ros::Time::now();
 	    		m_pos_est_v[i].publish(m_pos_estmsg);
-
+				// ros::Time publish_time = ros::Time::now();
+				// if(i==0)
+				// 	printf("------vehcile %d time pos est: %f---------\n",i,(publish_time - t_entering_cb).toSec());
 	    		//printf("*****vehicle%d: %f  %f  %f\n", i, swarm_pos[i](0), swarm_pos[i](1), swarm_pos[i](2));
 	    	}
 	    	if(isHovering)
@@ -1021,7 +1207,7 @@ public:
 		(m_att_est_v[vehicle_index])(0) = est->att_est.x;
 		(m_att_est_v[vehicle_index])(1) = est->att_est.y;
 		(m_att_est_v[vehicle_index])(2) = est->att_est.z;
-		printf(" ##### Roll:  %f   Pitch:    %f      Yaw:     %f ######\n",est->att_est.x,est->att_est.y,est->att_est.z);
+		//printf(" ##### Roll:  %f   Pitch:    %f      Yaw:     %f ######\n",est->att_est.x,est->att_est.y,est->att_est.z);
 		if(yaw_manuel_ready){
 			if(!yaw_est_ready[vehicle_index]){
 				yaw_bias[vehicle_index]=yaw_manuel[vehicle_index] - est->att_est.z;
@@ -1042,6 +1228,13 @@ public:
 		m_gyro_est_v[vehicle_index](1) = est->angular_velocity.y;
 		m_gyro_est_v[vehicle_index](2) = est->angular_velocity.z;
 		//printf("####### gyro_estimation:  %f     %f     %f\n ########",m_gyro_est_v[vehicle_index](0),m_gyro_est_v[vehicle_index](1),m_gyro_est_v[vehicle_index](2));
+	}
+
+	void recordingCallback(const easyfly::Recording::ConstPtr msg, int vehicle_index) // receiving velocity estimation
+	{
+		swarm_vel[vehicle_index](0) = msg->Rec_velEst.x;
+		swarm_vel[vehicle_index](1) = msg->Rec_velEst.y;
+		swarm_vel[vehicle_index](2) = msg->Rec_velEst.z;
 	}
 /***********************
 Concensus contol of UAVs
@@ -1098,18 +1291,18 @@ Concensus contol of UAVs
 			Vector3f att_temp;
 			Vector4f input_temp;
 			att_temp.setZero();
-			float thrust_i = 0;
-			AccSp_to_attSp(&Acc_input_concen[i],&att_temp,i,&thrust_i);
-			for(int i=0;i<3;++i)
+			//float thrust_i = 0;
+			AccSp_to_attSp(&Acc_input_concen[i], &att_temp, i, &input_temp);
+			/*for(int i=0;i<3;++i)
 			{
 				input_temp(i) = att_temp(i);
 			}
-			input_temp(3) = thrust_i;
+			input_temp(3) = thrust_i;*/
 			InputToUAVs.push_back(input_temp);
 		}
 	}
 
-	void AccSp_to_attSp(Vector3f* acc, Vector3f* att, int index, float* thrust_force)
+	void AccSp_to_attSp(Vector3f* acc, Vector3f* att, int index, Vector4f* att_output)
 	{
 		float yaw_est = (m_att_est_v[index])(DimOfVarSpace);
 		Vector3f _Zb_des,_Yb_des,_Xb_des,_Xc_des;
@@ -1141,6 +1334,11 @@ Concensus contol of UAVs
 			}
 
 			rotation2euler(&_R_des,att);
+			for(int j=0;j<3;++j)
+			{
+				(*att_output)(j) = (*att)(j);	
+			}
+			
 
 			Vector3f temp;
 			temp.setZero();
@@ -1148,10 +1346,11 @@ Concensus contol of UAVs
 				temp(i) = _R_des(i,2);
 			}
 
-			*thrust_force = vec3f_dot(acc,&temp);
+			float thrust_force = vec3f_dot(acc,&temp);
 
-			*thrust_force /= 480.0f;
-			*thrust_force = std::min(*thrust_force,max_thrust);		
+			thrust_force /= 470.0f;
+			thrust_force = std::min(thrust_force,max_thrust);	
+			(*att_output)(3) = thrust_force;
 	}
 
 	void command_takeoff(int i, float dt)
@@ -1161,8 +1360,6 @@ Concensus contol of UAVs
 		m_ctrl_v[i].posctrl_msg.pos_sp.x = _takeoff_Pos[i](0);
 		m_ctrl_v[i].posctrl_msg.pos_sp.y = _takeoff_Pos[i](1);
 		yawspReset(i);
-
-		//printf("pos sp commander: %f  %f  %f\n",m_ctrl_v[i].posctrl_msg.pos_sp.x,m_ctrl_v[i].posctrl_msg.pos_sp.y,m_ctrl_v[i].posctrl_msg.pos_sp.z );
 		if(m_ctrl_v[i].posctrl_msg.pos_sp.z >= _takeoff_Pos[i](2) + takeoff_objective_height)
 		{
 			takeoff_switch = false;
@@ -1172,13 +1369,11 @@ Concensus contol of UAVs
 		{
 	    	if(takeoff_condition) //in case of a sudden thrust at the beggining..
 	    	{
-	    		//_takeoff_Pos(2) = m_est_v[i].pos_est.z; //reset the takingoff height
 	    		m_ctrl_v[i].posctrl_msg.pos_sp.z = _takeoff_Pos[i](2) - takeoff_safe_distance;
 	    		takeoff_condition = false;
 	    	}
 	    	else
 	    	{
-	    		
 	    		if(m_ctrl_v[i].posctrl_msg.pos_sp.z < _takeoff_Pos[i](2) + 0.2f)
 	    		{
 	    			m_ctrl_v[i].posctrl_msg.pos_sp.z += takeoff_low_rate * dt;
@@ -1190,40 +1385,60 @@ Concensus contol of UAVs
 	    		}
 	    		else
 	    		{
-	    			printf("hello,high speed!\n");
+	    			//printf("hello,high speed!\n");
 	    			m_ctrl_v[i].posctrl_msg.pos_sp.z += takeoff_high_rate * dt;
 
 	    			m_ctrl_v[i].posctrl_msg.vel_ff.z = takeoff_high_rate;
 
 	    			m_ctrl_v[i].posctrl_msg.acc_sp.z = deriv_f(takeoff_high_rate, m_last_rateSp(2), dt);
 	    			m_last_rateSp(2) = takeoff_high_rate;
-	    		}
-	    		/*if(m_est_v[i].pos_est.z < takeoff_objective_height + m_takeoff_switch_Auto)
-	    		{
-	    			m_flight_state = Automatic;
-	    		}*/
-	    		//printf("%f \n", m_est_v[i].pos_est.z);
-	    		
+	    		}		
 	      	}
 	    }
 	}
 /*************************
 	Cmd Circling
 *************************/
+	void cal_radius(int index)
+	{
+		m_radius_Pos[index] = sqrt(swarm_pos[index](1)*swarm_pos[index](1) + swarm_pos[index](0)*swarm_pos[index](0));
+	}
+
+	void cal_theta(int index)
+	{
+		m_thetaPos[index] = atan2(swarm_pos[index](1),swarm_pos[index](0));
+	}
+
+	void cmd_to_radius(int index, float object_radius, float circle_err, float outWards_step, float z_object)
+	{
+		if(m_radius_Pos[index]>object_radius)
+		{	
+			m_ctrl_v[index].posctrl_msg.pos_sp.x -= outWards_step*cos(m_thetaPos[index]);
+			m_ctrl_v[index].posctrl_msg.pos_sp.y -= outWards_step*sin(m_thetaPos[index]);
+			m_ctrl_v[index].posctrl_msg.pos_sp.z = z_object;	
+
+		}
+		else if(m_radius_Pos[index]<object_radius)
+		{
+			m_ctrl_v[index].posctrl_msg.pos_sp.x += outWards_step*cos(m_thetaPos[index]);
+			m_ctrl_v[index].posctrl_msg.pos_sp.y += outWards_step*sin(m_thetaPos[index]);
+			m_ctrl_v[index].posctrl_msg.pos_sp.z = z_object;	
+		}
+	}
 	void command_circling(float dt)
 	{
 		int count_circlfini = 0;
 		int N = 0;
 		for(int i=0;i<swarm_pos.size();++i)
 		{
-			m_radius_Pos[i] = sqrt(swarm_pos[i](1)*swarm_pos[i](1) + swarm_pos[i](0)*swarm_pos[i](0));
+			cal_radius(i);
 		}
 
 		if (isFirstCircling)
 		{
 			for(int i=0;i<swarm_pos.size();i++)
 			{	
-				m_thetaPos[i] = atan2(swarm_pos[i](1),swarm_pos[i](0)); 
+				 cal_theta(i);
 			}
 			isFirstCircling = false;
 			N = 0;
@@ -1231,48 +1446,20 @@ Concensus contol of UAVs
 		else 
 		{		
 			//bool isReadyToCircle = false;
-			float circle_err = 0.02f;
+			float circle_err = 0.01f;
 			float outWards_step = 0.005f;
 			int count_ready_to_circle = 0;
-			float timeForOneCircle = 8.0f;
+			float timeForOneCircle = 9.0f;
+			float z_obj = takeoff_objective_height - m_takeoff_switch_Hover;
 			for (int i=0;i<g_vehicle_num;i++)
 			{
 				if((m_radius_Pos[i]-CIRCLING_R)*(m_radius_Pos[i]-CIRCLING_R)>circle_err)
 				{
-					if(m_radius_Pos[i]>CIRCLING_R)
-					{	
-						m_ctrl_v[i].posctrl_msg.pos_sp.x -= outWards_step*cos(m_thetaPos[i]);
-						m_ctrl_v[i].posctrl_msg.pos_sp.y -= outWards_step*sin(m_thetaPos[i]);
-						m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
-
-						/*m_ctrl_v[i].posctrl_msg.vel_ff.x = -outWards_step*cos(m_thetaPos[i])*50.0f;
-						m_ctrl_v[i].posctrl_msg.vel_ff.y = -outWards_step*sin(m_thetaPos[i])*50.0f;
-						m_ctrl_v[i].posctrl_msg.vel_ff.z = 0.0f;
-
-						m_ctrl_v[i].posctrl_msg.acc_sp.x = 0.0f;
-						m_ctrl_v[i].posctrl_msg.acc_sp.y = 0.0f;
-						m_ctrl_v[i].posctrl_msg.acc_sp.z = 0.0f;*/
-
-					}
-					else if(m_radius_Pos[i]<CIRCLING_R)
-					{
-						m_ctrl_v[i].posctrl_msg.pos_sp.x += outWards_step*cos(m_thetaPos[i]);
-						m_ctrl_v[i].posctrl_msg.pos_sp.y += outWards_step*sin(m_thetaPos[i]);
-						m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;	
-
-						/*m_ctrl_v[i].posctrl_msg.vel_ff.x = outWards_step*cos(m_thetaPos[i])*50.0f;
-						m_ctrl_v[i].posctrl_msg.vel_ff.y = outWards_step*sin(m_thetaPos[i])*50.0f;
-						m_ctrl_v[i].posctrl_msg.vel_ff.z = 0.0f;
-
-						m_ctrl_v[i].posctrl_msg.acc_sp.x = 0.0f;
-						m_ctrl_v[i].posctrl_msg.acc_sp.y = 0.0f;
-						m_ctrl_v[i].posctrl_msg.acc_sp.z = 0.0f;*/
-					}
+					cmd_to_radius(i,CIRCLING_R,circle_err,outWards_step,z_obj);
 				}
 				else
 				{	
 					++count_ready_to_circle;
-					printf("vehicle number #### %d ready to circling!!\n",i);
 					//m_flight_state = Hovering;
 				}		
 			}
@@ -1281,16 +1468,15 @@ Concensus contol of UAVs
 			{
 				++N;
 				float count_time = N*0.02f;
-				printf(" ####### N: %d ##########\n",N );
 				for(int i=0;i<swarm_pos.size();i++)
 				{
-					float step_theta = 3.1415926/(timeForOneCircle*50.0f);
+					float step_theta = 3.1415926/(timeForOneCircle*FREQUENCY);
 					m_thetaPos[i] += step_theta; //theta*t
 					m_ctrl_v[i].posctrl_msg.pos_sp.x = (m_radius_Pos[i])*cos(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.pos_sp.y = (m_radius_Pos[i])*sin(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.pos_sp.z = takeoff_objective_height - m_takeoff_switch_Hover;
 
-					float theta = step_theta*50;
+					float theta = step_theta*FREQUENCY;
 					m_ctrl_v[i].posctrl_msg.acc_sp.x = -(m_radius_Pos[i])*theta*theta*cos(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.acc_sp.y = -(m_radius_Pos[i])*theta*theta*sin(m_thetaPos[i]);
 					m_ctrl_v[i].posctrl_msg.acc_sp.z = 0.0f;
@@ -1307,8 +1493,7 @@ Concensus contol of UAVs
 				}
 				if(count_circlfini == g_vehicle_num)
 				{
-					m_flight_state = Hovering;
-					isHovering = true;
+					hover_toujour();
 					isFirstCircling = true;
 				}
 			}
@@ -1331,7 +1516,7 @@ Concensus contol of UAVs
 *******************/
 	void control_landing(int i, float dt)
 	{
-		printf("########### Vehicle %d is landing!! #######\n",i);
+		//printf("########### Vehicle %d is landing!! #######\n",i);
 		reset_takeoff = false;
 		m_ctrl_v[i].posctrl_msg.pos_sp.x = swarm_pos[i](0);
 		m_ctrl_v[i].posctrl_msg.pos_sp.y = swarm_pos[i](1);
@@ -1342,10 +1527,491 @@ Concensus contol of UAVs
 		}
 
 	}
+
+/**************************
+Bog-roll maneuver trajactory
+**************************/
+	void command_to_start_roll(int index)
+	{
+		float object_radius = (m_T1+m_T2)*m_vel_desNorm;
+		float circle_err = 0.02f;
+		float outWards_step = 0.005f;
+		int count_readyBigRoll = 0;
+		cal_radius(index);
+		cal_theta(index);
+		float z_obj = takeoff_objective_height - m_takeoff_switch_Hover;		
+		if((m_radius_Pos[index]-object_radius)*(m_radius_Pos[index]-object_radius)>circle_err)
+		{
+			cmd_to_radius(index,object_radius,circle_err,outWards_step,z_obj);
+		}
+		else
+		{
+			set_hover(5.0f,TwostateTrj_S1);		
+		}
+	}
+
+	void call_Learning()
+	{
+		char msg_name[50];
+		ros::NodeHandle n;
+		for(int i=0;i<g_vehicle_num;++i) 
+		{
+			sprintf(msg_name,"/learning_service");
+			ros::ServiceClient learningservice = n.serviceClient<easyfly::Learning>(msg_name); //client instance
+			learningservice.waitForExistence();
+			easyfly::Learning learning_request;
+			learning_request.request.group_index = i;
+			learning_request.request.numberOfTrailsS0 = 3; //intit pos
+			learning_request.request.numberOfTrailsS1 = 3; //vel_desired
+			learning_request.request.numberOfTrailsS2 = 5; //roll angle desired
+			learningservice.call(learning_request);
+		}
+	}
+	void renew_Trj()
+	{
+		for(int index=0;index<g_vehicle_num;++index)
+		{
+			for(int i=0;i<3;++i) //i for dimensions x,y,z
+			{
+				float t = 0.0f;
+				for(int n=0;n<m_T1*FREQUENCY;++n)
+				{
+					(m_state_opti_velS1[index][i])[n]	+=  m_gamma_vel * swarm_vel_err[index](i);
+				}
+				for(int n=0;n<m_T2*FREQUENCY;++n)
+				{
+					(m_state_opti_velS2[index][i])[n]	+=  m_gamma_theta * swarm_att_err[index](i);
+				}
+			}
+		}
+	}
+	void Cmd_stateTrj_S1()
+	{
+		//printf("------------entering S1!--------------");
+		fflush(stdout);
+		int numberOfTraining = 5;
+		if(isFirstS1 && !isNewTrain)
+		{	Trj_Generate(1);
+			Trj_Generate(2);
+			Trj_Generate(3);
+			boost::thread* m_thread = new boost::thread(boost::bind(&Commander::call_Learning,this));
+			m_count_state = 0;
+			isFirstS1 = false;
+		}
+		else if(isNewTrain)
+		{
+			printf("############### starting to renew 3 trjs ##############");
+			fflush(stdout);
+			renew_Trj();
+			isNewTrain = false;
+		}
+		else
+		{
+			/*printf("############### starting to give pos_ctrl commands ##############");
+			fflush(stdout);*/
+			//bool isFinishOneTrain = false;
+			for(int i=0;i<g_vehicle_num;++i)
+			{
+				m_ctrl_v[i].posctrl_msg.State_index = 1;
+				m_ctrl_v[i].posctrl_msg.pos_sp.x = m_state_opti_posS1[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.pos_sp.y = m_state_opti_posS1[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.pos_sp.z = m_state_opti_posS1[i][2][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.x = m_state_opti_velS1[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.y = m_state_opti_velS1[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.z = m_state_opti_velS1[i][2][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.x = m_state_opti_accS1[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.y = m_state_opti_accS1[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.z = m_state_opti_accS1[i][2][m_count_state];
+
+				m_ctrl_v[i].posctrl_msg.count_training = m_count_training;
+				m_ctrl_v[i].posctrl_msg.header.stamp = ros::Time::now();
+
+				Vector3f acc_temp;
+				Vector3f att_temp;
+				acc_temp.setZero();
+				att_temp.setZero();
+
+				acc_temp(0) = m_state_opti_accS1[i][0][m_count_state];
+				acc_temp(1) = m_state_opti_accS1[i][1][m_count_state];
+				acc_temp(2) = m_state_opti_accS1[i][2][m_count_state];
+				
+				AccSp_to_attSp(&acc_temp, &att_temp, i, &m_attoutput[i]);
+
+				m_ctrl_v[i].posctrl_msg.roll_sp = m_attoutput[i](0);
+				m_ctrl_v[i].posctrl_msg.pitch_sp = m_attoutput[i](1);
+				m_ctrl_v[i].posctrl_msg.yaw_sp = m_attoutput[i](2);
+
+			}//for i<g_vehicle_num
+			++m_count_state;
+			if(m_count_state == m_state_opti_posS3[0][0].size()-1) // One period of training
+			{
+				m_flight_state = TwostateTrj_S2;
+				isFirstS1 = true;
+			}// if one period of training	
+		}
+	}
+	
+	void Cmd_stateTrj_S2()
+	{
+		if(isFirstS2)
+		{
+			m_count_state = 0;
+			isFirstS2 = false;
+		}
+		else
+		{	
+			for(int i=0;i<g_vehicle_num;++i)
+			{
+				m_ctrl_v[i].posctrl_msg.State_index = 2;
+				m_ctrl_v[i].posctrl_msg.pos_sp.x = m_state_opti_posS2[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.pos_sp.y = m_state_opti_posS2[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.pos_sp.z = m_state_opti_posS2[i][2][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.x = m_state_opti_velS2[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.y = m_state_opti_velS2[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.z = m_state_opti_velS2[i][2][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.x = m_state_opti_accS2[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.y = m_state_opti_accS2[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.z = m_state_opti_accS2[i][2][m_count_state];
+
+				m_ctrl_v[i].posctrl_msg.header.stamp = ros::Time::now();
+
+				Vector3f acc_temp;
+				Vector3f att_temp;
+				acc_temp.setZero();
+				att_temp.setZero();
+
+				acc_temp(0) = m_state_opti_accS2[i][0][m_count_state];
+				acc_temp(1) = m_state_opti_accS2[i][1][m_count_state];
+				acc_temp(2) = m_state_opti_accS2[i][2][m_count_state];
+				
+				AccSp_to_attSp(&acc_temp, &att_temp, i, &m_attoutput[i]);
+
+			}
+			++m_count_state;
+			if(m_count_state == m_state_opti_posS3[0][0].size()-1) // One period of training
+			{
+				m_flight_state = TwostateTrj_S3;
+				isFirstS2 = true;
+			}// if one period of training	
+		}
+	}
+
+	void Cmd_stateTrj_S3()
+	{
+		if(isFirstS3)
+		{
+			m_count_state = 0;
+			isFirstS3 = false;
+		}
+		else
+		{
+			//bool isFinishOneTrain = false;
+			for(int i=0;i<g_vehicle_num;++i)
+			{
+				m_ctrl_v[i].posctrl_msg.State_index = 1;
+				m_ctrl_v[i].posctrl_msg.pos_sp.x = m_state_opti_posS3[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.pos_sp.y = m_state_opti_posS3[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.pos_sp.z = m_state_opti_posS3[i][2][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.x = m_state_opti_velS3[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.y = m_state_opti_velS3[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.vel_ff.z = m_state_opti_velS3[i][2][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.x = m_state_opti_accS3[i][0][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.y = m_state_opti_accS3[i][1][m_count_state];
+				m_ctrl_v[i].posctrl_msg.acc_sp.z = m_state_opti_accS3[i][2][m_count_state];
+
+				m_ctrl_v[i].posctrl_msg.count_training = m_count_training;
+				m_ctrl_v[i].posctrl_msg.header.stamp = ros::Time::now();
+
+				Vector3f acc_temp;
+				Vector3f att_temp;
+				acc_temp.setZero();
+				att_temp.setZero();
+
+				acc_temp(0) = m_state_opti_accS3[i][0][m_count_state];
+				acc_temp(1) = m_state_opti_accS3[i][1][m_count_state];
+				acc_temp(2) = m_state_opti_accS3[i][2][m_count_state];
+				
+				AccSp_to_attSp(&acc_temp, &att_temp, i, &m_attoutput[i]);
+
+				m_ctrl_v[i].posctrl_msg.roll_sp = m_attoutput[i](0);
+				m_ctrl_v[i].posctrl_msg.pitch_sp = m_attoutput[i](1);
+				m_ctrl_v[i].posctrl_msg.yaw_sp = m_attoutput[i](2);
+
+			}//for i<g_vehicle_num
+			++m_count_state;
+			if(m_count_state == m_state_opti_posS3[0][0].size()-1) // One period of training
+			{
+				++m_count_training;
+				isNewTrain = true;
+				isFirstS3 = true;
+				set_hover(5.0f,toBeReadyForBigRoll);
+			}// if one period of training	
+		}
+	}
+
+	void Trj_Generate(int state_index)
+	{
+		Vector3f pos_init, vel_init, acc_init;
+		Vector3f pos_end, vel_end, acc_end, att_end, _Xb_des, _Yb_des,_Zb_des;
+		Matrix3f opti_params_stateTrj, R;
+		switch(state_index){
+			case 1:{
+				printf("---------- Planning trj1 ----------\n");
+				fflush(stdout);
+				for(int i=0;i<g_vehicle_num;++i)
+				{	
+					m_ctrl_v[i].posctrl_msg.T = m_T1;
+					pos_init.setZero();
+					vel_end.setZero();
+					opti_params_stateTrj.setZero();
+
+					/*******
+					state acceleration 
+					********/
+					acc_init.setZero();
+					acc_end.setZero();
+
+					/**************
+					state velocity 
+					***************/
+					cal_theta(i); 
+					m_thetaPosS1[i] = m_thetaPos[i];
+					cal_radius(i);
+					m_radius_PosS1[i] = m_radius_Pos[i];
+
+					vel_init.setZero();
+					vel_end(0) = -cos(m_thetaPosS1[i]);
+					vel_end(1) = -sin(m_thetaPosS1[i]);
+					vel_end(2) = 0.0f;
+					number_times_vec3f(&m_vel_desNorm, &vel_end);
+
+					m_ctrl_v[i].posctrl_msg.vel_end.x = vel_end(0);
+					m_ctrl_v[i].posctrl_msg.vel_end.x = vel_end(1);
+					m_ctrl_v[i].posctrl_msg.vel_end.x = vel_end(2);
+
+					/******
+					state position 
+					*******/
+					float radius_initS1 = m_vel_desNorm*m_T2 + m_T1*m_vel_desNorm;
+					pos_init(0) = radius_initS1*cos(m_thetaPosS1[i]);
+					pos_init(1) = radius_initS1*sin(m_thetaPosS1[i]);
+					pos_init(2) = takeoff_objective_height - m_takeoff_switch_Hover;
+					
+					pos_end.setZero();
+					float radius_finiS1 = m_vel_desNorm * m_T2;
+					pos_end(0) = radius_finiS1*cos(m_thetaPosS1[i]);
+					pos_end(1) = radius_finiS1*sin(m_thetaPosS1[i]);
+					pos_end(2) = takeoff_objective_height - m_takeoff_switch_Hover;
+					
+					state2state(& pos_init, & vel_init, & acc_init, & pos_end, & vel_end, & acc_end, & opti_params_stateTrj, m_T1, i, FREQUENCY,1);
+					
+					posspReset(i,&swarm_pos);
+				}
+				break;
+			}
+			case 2:{
+				printf("---------- Planning trj2 ----------\n");
+				fflush(stdout);
+				for(int i=0;i<g_vehicle_num;++i)
+				{	
+					Vector3f pos_init, vel_init, acc_init, att_end, _Xb_des, _Yb_des,_Zb_des;
+					Vector3f pos_end, vel_end, acc_end;
+					Matrix3f opti_params_stateTrj, R;
+
+					pos_init.setZero();
+					vel_init.setZero();
+					vel_end.setZero();
+					vel_init(0) = -cos(m_thetaPosS1[i]);
+					vel_init(1) = -sin(m_thetaPosS1[i]);
+					vel_init(2) = 0.0f;
+
+					number_times_vec3f(&m_vel_desNorm, &vel_init);
+					vel_end = vel_init;
+					
+					opti_params_stateTrj.setZero();
+					R.setZero();
+					/******
+					state acceleration 
+					*******/
+					acc_init.setZero();
+					acc_end.setZero();
+					att_end(0) = degToRad(45.0f);
+					att_end(1) = 0.0f;
+					att_end(2) = 0.0f;
+
+					euler2rotation(&att_end, &R);
+					for (int i=0; i<3; i++)
+					{
+						_Xb_des(i) = R(i,0);
+						_Yb_des(i) = R(i,1);
+					}
+					vec3f_cross( &_Xb_des, &_Yb_des, &_Zb_des);
+					float acc_abs = GRAVITY/1000.0f/cos(att_end(0));
+					for(int i=0;i<3;++i)
+					{
+						acc_end(i) = acc_abs*_Zb_des(i);
+					}
+					/******
+					state position 
+					*******/
+					float radius_initS2 = m_vel_desNorm*m_T2;
+					pos_init(0) = radius_initS2*cos(m_thetaPosS1[i]);
+					pos_init(1) = radius_initS2*sin(m_thetaPosS1[i]);
+					pos_init(2) = takeoff_objective_height - m_takeoff_switch_Hover;
+					pos_end.setZero();
+					pos_end(2) = takeoff_objective_height - m_takeoff_switch_Hover;
+					/******
+					state velocity 
+					*******/
+
+					//vel_init.setZero();
+					vel_init(0) = -cos(m_thetaPosS1[i]);
+					vel_init(1) = -sin(m_thetaPosS1[i]);
+					vel_init(2) = 0.0f;
+					number_times_vec3f(&m_vel_desNorm, &vel_init);
+					
+					state2state(& pos_init, & vel_init, & acc_init, & pos_end, & vel_end, & acc_end, & opti_params_stateTrj, m_T2, i, FREQUENCY,2);
+					
+					posspReset(i,&swarm_pos);
+				}
+				break;
+			}
+			case 3:{
+				printf("---------- Planning trj3 ----------\n");
+				fflush(stdout);
+				for(int i=0;i<g_vehicle_num;++i)
+				{	
+					m_ctrl_v[i].posctrl_msg.T = m_T3;
+					Vector3f pos_init, vel_init, acc_init;
+					Vector3f pos_end, vel_end, acc_end;
+					Matrix3f opti_params_stateTrj;
+
+					pos_init.setZero();
+					vel_end.setZero();
+					opti_params_stateTrj.setZero();
+
+					/*******
+					state acceleration 
+					********/
+					acc_init.setZero();
+					acc_end.setZero();
+					//acc_end(2) = acc_end(2) + GRAVITY/1000.0f;// * (float)VEHICLE_MASS; 
+
+					/**************
+					state velocity 
+					***************/
+					vel_end.setZero();
+					vel_init(0) = -cos(m_thetaPos[i]);
+					vel_init(1) = -sin(m_thetaPos[i]);
+					vel_init(2) = 0.0f;
+					number_times_vec3f(&m_vel_desNorm, &vel_init);
+
+					/******
+					state position 
+					*******/
+					float radius_initS1 = m_vel_desNorm*m_T2 + m_T3*m_vel_desNorm;
+					pos_end(0) = -radius_initS1*cos(m_thetaPosS1[i]);
+					pos_end(1) = -radius_initS1*sin(m_thetaPosS1[i]);
+					pos_end(2) = takeoff_objective_height - m_takeoff_switch_Hover;
+					
+					pos_init.setZero();
+					pos_init(2) = takeoff_objective_height - m_takeoff_switch_Hover;
+					
+					state2state(& pos_init, & vel_init, & acc_init, & pos_end, & vel_end, & acc_end, & opti_params_stateTrj, m_T3, i, FREQUENCY,3);
+					
+					posspReset(i,&swarm_pos);
+				}
+				break;
+			}
+		}
+	}
+
+	void state2state(Vector3f* pos_init, Vector3f* vel_init, Vector3f* acc_init, Vector3f* pos_end, Vector3f* vel_end, Vector3f* acc_end, Matrix3f* output_optim, float& T, int index, float frequency,int State_index)
+	{
+		Matrix3f optim_matrix;
+		optim_matrix.setZero();
+		optim_matrix<< 60.0f/T/T/T, -360.0f/T/T/T/T, 720.0f/T/T/T/T/T,
+						-24.0f/T/T,    168.0f/T/T/T,  -360.0f/T/T/T/T,
+						    3.0f/T,      -24.0f/T/T,      60.0f/T/T/T;
+
+		for (int i=0;i<3;++i)// loop for dimensions x,y,z
+		{
+			float delta_acc = (*acc_end)(i)-(*acc_init)(i);
+			float delta_vel = (*vel_end)(i)-(*vel_init)(i)-(*acc_init)(i)*T;
+			float delta_pos = (*pos_end)(i)-(*pos_init)(i)-(*vel_init)(i)*T-(*acc_init)(i)*T*T/2.0f;
+			Vector3f delta_v;
+			Vector3f parameters;
+			delta_v.setZero();
+			parameters.setZero();
+			delta_v(0) = delta_acc;
+			delta_v(1) = delta_vel;
+			delta_v(2) = delta_pos;
+			parameters = optim_matrix*delta_v;
+			for(int j=0;j<3;++j)
+			{
+				(*output_optim)(i,j) = parameters(j); //alpha,beta and gamma in 3 dimensions	
+			}
+		}
+
+		for(int i=0;i<3;++i) //i for dimensions x,y,z
+		{
+			float t = 0.0f;
+			switch (State_index){
+				case 1: //State 1
+				{
+					for(int n=0;n<T*frequency;++n)
+					{
+						t += n/frequency; //at time: t
+						
+						((m_state_opti_posS1[index])[i]).push_back((*output_optim)(i,0)/120.0f*m_power_f(t,5)+(*output_optim)(i,1)/24.0f*m_power_f(t,4)+(*output_optim)(i,2)/6.0f*m_power_f(t,3)+(*acc_init)(i)/2.0f*m_power_f(t,2)+(*vel_init)(i)*t+(*pos_init)(i));
+						//pos
+						((m_state_opti_velS1[index])[i]).push_back((*output_optim)(i,0)/24.0f*m_power_f(t,4)+(*output_optim)(i,1)/6.0f*m_power_f(t,3)+(*output_optim)(i,2)/2.0f*m_power_f(t,2)+(*acc_init)(i)*t+(*vel_init)(i));
+						//vel
+						((m_state_opti_accS1[index])[i]).push_back((*output_optim)(i,0)/6.0f*m_power_f(t,3)+(*output_optim)(i,1)/2.0f*m_power_f(t,2)+(*output_optim)(i,2)*t+(*acc_init)(i));
+						//acc
+					}
+				}
+				case 2://State 2
+				{
+					for(int n=0;n<T*frequency;++n)
+					{
+						t += n/frequency; //at time: t
+						
+						((m_state_opti_posS2[index])[i]).push_back((*output_optim)(i,0)/120.0f*m_power_f(t,5)+(*output_optim)(i,1)/24.0f*m_power_f(t,4)+(*output_optim)(i,2)/6.0f*m_power_f(t,3)+(*acc_init)(i)/2.0f*m_power_f(t,2)+(*vel_init)(i)*t+(*pos_init)(i));
+						//pos
+						((m_state_opti_velS2[index])[i]).push_back((*output_optim)(i,0)/24.0f*m_power_f(t,4)+(*output_optim)(i,1)/6.0f*m_power_f(t,3)+(*output_optim)(i,2)/2.0f*m_power_f(t,2)+(*acc_init)(i)*t+(*vel_init)(i));
+						//vel
+						
+						((m_state_opti_accS2[index])[i]).push_back((*output_optim)(i,0)/6.0f*m_power_f(t,3)+(*output_optim)(i,1)/2.0f*m_power_f(t,2)+(*output_optim)(i,2)*t+(*acc_init)(i));
+						//acc
+					}
+				}
+				case 3://State 3
+				{
+					for(int n=0;n<T*frequency;++n)
+					{
+						t += n/frequency; //at time: t
+						
+						((m_state_opti_posS3[index])[i]).push_back((*output_optim)(i,0)/120.0f*m_power_f(t,5)+(*output_optim)(i,1)/24.0f*m_power_f(t,4)+(*output_optim)(i,2)/6.0f*m_power_f(t,3)+(*acc_init)(i)/2.0f*m_power_f(t,2)+(*vel_init)(i)*t+(*pos_init)(i));
+						//pos
+						((m_state_opti_velS3[index])[i]).push_back((*output_optim)(i,0)/24.0f*m_power_f(t,4)+(*output_optim)(i,1)/6.0f*m_power_f(t,3)+(*output_optim)(i,2)/2.0f*m_power_f(t,2)+(*acc_init)(i)*t+(*vel_init)(i));
+						//vel
+						
+						((m_state_opti_accS3[index])[i]).push_back((*output_optim)(i,0)/6.0f*m_power_f(t,3)+(*output_optim)(i,1)/2.0f*m_power_f(t,2)+(*output_optim)(i,2)*t+(*acc_init)(i));
+						//acc
+					}
+				}
+			}
+			
+
+		}
+	}
+
 };
 
 int main(int argc, char **argv)
 {
+	
 //  int ret = init_scan(argc, argv);
 	//glutInit(&argc, argv);
 	ros::init(argc, argv, "commander");
@@ -1353,11 +2019,9 @@ int main(int argc, char **argv)
 	// ros::NodeHandle n;
 	n.getParam("/g_vehicle_num", g_vehicle_num);
 	n.getParam("/joy_num", g_joy_num);
-//	n.getParam("/flight_mode", g_flight_mode);this has moved to function run
-	Commander commander(n);
-	commander.run(50);
-
-
+	n.getParam("/flight_mode", g_flight_mode);
+	Commander commander(n);	
+	commander.run(100);
   return 0;
 
 

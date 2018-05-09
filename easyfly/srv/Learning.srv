@@ -1,0 +1,4 @@
+int32 group_index
+int32 numberOfTrailsS0
+int32 numberOfTrailsS1
+int32 numberOfTrailsS2

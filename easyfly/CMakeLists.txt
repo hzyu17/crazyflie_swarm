@@ -24,6 +24,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_service_files(
   FILES
   Swarm_Add.srv
+  Learning.srv
   UpdateParams.srv
 )
 
@@ -36,15 +37,19 @@ add_message_files(
   raw_ctrl_sp.msg
   trj_ctrl_sp.msg
   pos_est.msg
+  pos_est_test.msg
   output.msg
   Recording.msg
   att_est.msg
+  iteration_errs.msg
+  vicon_markernum.msg
 )
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages( DEPENDENCIES
    std_msgs
    geometry_msgs
+   #generate_messages
 )
 
 # Enable C++11
@@ -83,12 +88,12 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 include_directories(
   ${catkin_INCLUDE_DIRS}
   ./include
- # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include
 )
 
 add_library(gl_declair SHARED include/gl_declair.cpp)
 add_library(IIR SHARED include/IIR.cpp)
 add_library(type_methode SHARED include/type_methode.cpp)
+#add_library(Controller_pseuDecentrolized SHARED src/swarm_controller_pseudo_Decentralized.cpp)
 
 add_executable(commander
   src/commander.cpp
@@ -99,8 +104,20 @@ target_link_libraries(commander
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
   ${OpenCV_LIBS}
- # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
- # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/gl_declair.cpp
+ gl_declair
+ type_methode
+)
+
+add_executable(vicon_tracker
+  src/vicon_tracker.cpp
+)
+
+
+target_link_libraries(vicon_tracker
+  GLU GL glut
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+  ${OpenCV_LIBS}
  gl_declair
  type_methode
 )
@@ -112,8 +129,41 @@ add_executable(swarm_Server
 target_link_libraries(swarm_Server
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
- # /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
  type_methode
+)
+
+add_executable(communication_test
+  src/communication_test.cpp
+)
+
+target_link_libraries(communication_test
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+ type_methode
+ IIR
+)
+
+add_executable(commander_test
+  src/commander_test.cpp
+)
+
+target_link_libraries(commander_test
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+  ${OpenCV_LIBS}
+ type_methode
+)
+
+add_executable(swarm_Server_Decentralized
+  src/swarm_Server_Decentralized.cpp
+)
+
+target_link_libraries(swarm_Server_Decentralized
+  ${catkin_LIBRARIES}
+  ${Boost_LIBRARIES}
+  type_methode
+  #Controller_pseuDecentrolized
+  IIR
 )
 
 add_executable(swarm_addCf
@@ -127,19 +177,16 @@ add_executable(swarm_addCf
 target_link_libraries(swarm_addCf
   ${catkin_LIBRARIES}
 )
-add_executable(swarm_controller
-  src/swarm_controller.cpp
-)
+#add_executable(swarm_controller
+  #src/swarm_controller.cpp
+#)
 
-target_link_libraries(swarm_controller
-  ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
- #  /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/type_methode.cpp
- #  /home/wade/catkin_ws/src/crazyflie_ros-first_trails/easyfly/include/IIR.cpp
- IIR
- type_methode
-)
-
+#target_link_libraries(swarm_controller
+ # ${catkin_LIBRARIES}
+ # ${Boost_LIBRARIES}
+#IIR
+ #type_methode
+#)
 
 add_executable(joysticks2
   src/joysticks2.cpp

@@ -122,7 +122,7 @@ public:
 		v_posctrl_output.setZero();
 		ros::NodeHandle nh("~");//~ means private param
 		nh.getParam("group_index", m_group_index);
-		
+		m_cmd.flight_state = Idle;
 		//sprintf(m_resFnameRoot,"/home/walt/catkin_ws/src/crazyflie_ros-first_trails/easyfly/resultat/vehicle%d/",m_group_index);
 
 		/*char msg_name[50];
@@ -131,15 +131,10 @@ public:
 		sprintf(msg_name,"/vehicle%d/output", m_group_index);
 		m_pubs.m_outputpub = nh.advertise<easyfly::output>(msg_name, 10);
 
-		sprintf(msg_name,"/vehicle%d/pos_est",m_group_index);
-		m_estsub = nh.subscribe<easyfly::pos_est>(msg_name,5,&Swarm_Controller::pos_estCallback, this);
+		// sprintf(msg_name,"/vehicle%d/pos_est",m_group_index);
+		// m_estsub = nh.subscribe<easyfly::pos_est>(msg_name,5,&Swarm_Controller::pos_estCallback, this);
 
-		/*sprintf(msg_name,"/vehicle%d/pos_est", m_group_index); 
-		m_pubs.m_pos_estpub = nh.advertise<easyfly::pos_est>(msg_name, 5);*/
-
-		//sprintf(msg_name,"/vicon/crazyflie%d/whole",m_group_index);
-		//m_subs.m_viconsub = nh.subscribe<geometry_msgs::TransformStamped>("/vicon/one_cf/cf",5,&Swarm_Controller::vicon_Callback, this);
-
+		
 		sprintf(msg_name,"/joygroup%d/joy",0);
 		m_subs.m_joysub = nh.subscribe<sensor_msgs::Joy>(msg_name,5,&Swarm_Controller::joyCb, this);
 		
@@ -162,7 +157,8 @@ public:
 		sprintf(msg_name,"/vehicle%d/trj_ctrl_sp",m_group_index);
 		m_subs.m_trjsub = nh.subscribe<easyfly::trj_ctrl_sp>(msg_name,5,&Swarm_Controller::trjctrlCallback, this);
 		
-		m_subs.m_cmdsub = nh.subscribe<easyfly::commands>("/commands",5,&Swarm_Controller::cmdCallback, this);
+    sprintf(msg_name,"/vehicle%d/commands",m_group_index);
+		m_subs.m_cmdsub = nh.subscribe<easyfly::commands>(msg_name,5,&Swarm_Controller::cmdCallback, this);
 		
 	}
 
@@ -205,15 +201,11 @@ public:
 				}//case MODE_RAW
 				break;
 				case MODE_POS:{
-					if(m_cmd.flight_state!=Idle && !isFirstposSp && !isFirstPosEst && !isFirstAttEst){// && !isStateMode && !isFirstAccIMU){ 
-						
-						control_nonLineaire(&m_recording, &m_pos_est, &m_sp_vecs.v_posctrl_posSp, &m_sp_vecs.v_posctrl_velFF, &m_sp_vecs.v_posctrl_acc_sp, &v_posctrl_output, &m_est_vecs.m_cfImuAcc, &m_est_vecs.m_att_est, dt);
-						recordingFormatChanging(&m_recording);
-						m_RecPub.publish(m_recordmsg);
-						m_output.att_sp.x = v_posctrl_output(0);
-						m_output.att_sp.y = v_posctrl_output(1);
-						m_output.att_sp.z = v_posctrl_output(2);	
-						m_output.throttle = v_posctrl_output(3);
+					if(m_cmd.flight_state==TakingOff){
+						m_output.att_sp.x = 0.0f;
+						m_output.att_sp.y = 0.0f;
+						m_output.att_sp.z = 0.0f;	
+						m_output.throttle = 0.4f;
 						m_pubs.m_outputpub.publish(m_output);
 					}
 				//}//if flight_mode!=Idle
@@ -260,32 +252,6 @@ public:
 		}
 	}
 
-	void recordingFormatChanging(M_recording* recording)
-	{
-		for (int i=0;i<3;i++){
-			m_recordmsg.Rec_posEst.x = recording->Rec_posEst(0);
-			m_recordmsg.Rec_posEst.y = recording->Rec_posEst(1);
-			m_recordmsg.Rec_posEst.z = recording->Rec_posEst(2);
-			m_recordmsg.Rec_velEst.x = recording->Rec_velEst(0);
-			m_recordmsg.Rec_velEst.y = recording->Rec_velEst(1);
-			m_recordmsg.Rec_velEst.z = recording->Rec_velEst(2);
-			m_recordmsg.Rec_attEst.x = recording->Rec_attEst(0);
-			m_recordmsg.Rec_attEst.y = recording->Rec_attEst(1);
-			m_recordmsg.Rec_attEst.z = recording->Rec_attEst(2);
-			m_recordmsg.Rec_posSp.x = recording->Rec_posSp(0);
-			m_recordmsg.Rec_posSp.y = recording->Rec_posSp(1);
-			m_recordmsg.Rec_posSp.z = recording->Rec_posSp(2);
-			m_recordmsg.Rec_velSp.x = recording->Rec_velSp(0);
-			m_recordmsg.Rec_velSp.y = recording->Rec_velSp(1);
-			m_recordmsg.Rec_velSp.z = recording->Rec_velSp(2);
-			m_recordmsg.Rec_accSp.x = recording->Rec_accSp(0);
-			m_recordmsg.Rec_accSp.y = recording->Rec_accSp(1);
-			m_recordmsg.Rec_accSp.z = recording->Rec_accSp(2);
-			m_recordmsg.Rec_yaw_sp = recording->Rec_yaw_sp; 
-			m_recordmsg.Rec_roll_sp = recording->Rec_roll_sp; 
-			m_recordmsg.Rec_pitch_sp = recording->Rec_pitch_sp;
-		}
-	}
 	void rawctrlCallback(const easyfly::raw_ctrl_sp::ConstPtr& ctrl)
 	{	
 		m_ctrl.raw.raw_att_sp.x = ctrl->raw_att_sp.x;
@@ -293,24 +259,24 @@ public:
 		m_ctrl.raw.raw_att_sp.z = ctrl->raw_att_sp.z;
 		m_ctrl.raw.throttle = ctrl->throttle;
 	}
-	void pos_estCallback(const easyfly::pos_est::ConstPtr& est)
-	{	ros::Time t_cb = ros::Time::now();
-		printf("------ time pos est: %f---------\n",(t_cb - m_times.t_entering_cb).toSec());
-		m_times.t_entering_cb = t_cb;
-		//printf("got pos estimation\n");
-		if(isFirstPosEst){
-			//m_group_index = est->vehicle_index;
-			isFirstPosEst = false;
-		}
-		m_pos_est(0) = est->pos_est.x;
-		m_pos_est(1) = est->pos_est.y;
-		m_pos_est(2) = est->pos_est.z;
-	}
+	// void pos_estCallback(const easyfly::pos_est::ConstPtr& est)
+	// {	ros::Time t_cb = ros::Time::now();
+	// 	printf("------ time pos est: %f---------\n",(t_cb - m_times.t_entering_cb).toSec());
+	// 	m_times.t_entering_cb = t_cb;
+	// 	//printf("got pos estimation\n");
+	// 	if(isFirstPosEst){
+	// 		//m_group_index = est->vehicle_index;
+	// 		isFirstPosEst = false;
+	// 	}
+	// 	m_pos_est(0) = est->pos_est.x;
+	// 	m_pos_est(1) = est->pos_est.y;
+	// 	m_pos_est(2) = est->pos_est.z;
+	// }
 	
 
 	void posctrlCallback(const easyfly::pos_ctrl_sp::ConstPtr& ctrl)
 	{
-		//printf("posSp in controller: %f %f %f\n",m_sp_vecs.v_posctrl_posSp(0),m_sp_vecs.v_posctrl_posSp(1),m_sp_vecs.v_posctrl_posSp(2) );
+		// printf("posSp in controller: %f %f %f\n",m_sp_vecs.v_posctrl_posSp(0),m_sp_vecs.v_posctrl_posSp(1),m_sp_vecs.v_posctrl_posSp(2) );
 		(m_sp_vecs.v_posctrl_posSp)(0) = ctrl->pos_sp.x;
 		(m_sp_vecs.v_posctrl_posSp)(1) = ctrl->pos_sp.y;
 		(m_sp_vecs.v_posctrl_posSp)(2) = ctrl->pos_sp.z;

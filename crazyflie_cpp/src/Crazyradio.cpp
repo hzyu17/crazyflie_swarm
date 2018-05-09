@@ -27,6 +27,7 @@ Crazyradio::Crazyradio(uint32_t devid)
     , m_channel(0)
     , m_address(0)
     , m_datarate(Datarate_250KPS)
+    , m_ackEnable(true)
 {
     int result = libusb_init(&m_ctx);
     if (result != LIBUSB_SUCCESS) {
@@ -36,6 +37,7 @@ Crazyradio::Crazyradio(uint32_t devid)
         libusb_exit(m_ctx);
         throw std::runtime_error("Could not find Crazyradio with given devId!");
     }
+
 }
 
 Crazyradio::~Crazyradio()
@@ -176,7 +178,7 @@ void Crazyradio::setAddress(uint64_t address)
         0,
         a,
         5,
-        /*timeout*/ 1000);
+        /*timeout*/ 100);
     // if (status != LIBUSB_SUCCESS) {
     //     std::cerr << "sendVendorSetup: " << libusb_error_name(status) << std::endl;
     // }
@@ -227,6 +229,7 @@ void Crazyradio::setArdBytes(uint8_t nbytes)
 void Crazyradio::setAckEnable(bool enable)
 {
     sendVendorSetup(ACK_ENABLE, enable, 0, NULL, 0);
+    m_ackEnable = enable;
 }
 
 void Crazyradio::setContCarrier(bool active)
@@ -254,7 +257,7 @@ void Crazyradio::sendPacket(
         (uint8_t*)data,
         length,
         &transferred,
-        /*timeout*/ 1000);
+        /*timeout*/ 0);
     if (status != LIBUSB_SUCCESS) {
         std::cerr << "Send " << libusb_error_name(status) << std::endl;
     }
@@ -271,7 +274,7 @@ void Crazyradio::sendPacket(
         (unsigned char*)&result,
         sizeof(result) - 1,
         &transferred,
-        /*timeout*/ 1000);
+        /*timeout*/ 100);
     if (status != LIBUSB_SUCCESS) {
         std::cerr << "Receive " << libusb_error_name(status) << std::endl;
     }
@@ -298,7 +301,7 @@ void Crazyradio::sendPacketNoAck(
         (uint8_t*)data,
         length,
         &transferred,
-        /*timeout*/ 1000);
+        /*timeout*/ 100);
     if (status != LIBUSB_SUCCESS) {
         std::cerr << "Send " << libusb_error_name(status) << std::endl;
     }
@@ -327,8 +330,9 @@ void Crazyradio::sendVendorSetup(
         index,
         (unsigned char*)data,
         length,
-        /*timeout*/ 1000);
+        /*timeout*/ 100);
     if (status != LIBUSB_SUCCESS) {
         std::cerr << "sendVendorSetup: " << libusb_error_name(status) << std::endl;
     }
 }
+

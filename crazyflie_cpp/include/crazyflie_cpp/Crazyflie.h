@@ -148,7 +148,10 @@ protected:
   bool sendPacket(
     const uint8_t* data,
     uint32_t length);
-
+  bool sendPacketNoAck(
+    const uint8_t* data,
+    uint32_t length);
+    
   void handleAck(
     const Crazyradio::Ack& result);
 
@@ -237,6 +240,7 @@ private:
   template<typename T>
   friend class LogBlock;
   friend class LogBlockGeneric;
+  
 };
 
 template<class T>

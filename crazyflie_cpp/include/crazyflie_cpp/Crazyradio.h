@@ -74,6 +74,10 @@ public:
         const uint8_t* data,
         uint32_t length);
 
+    bool getAckEnable() const {
+        return m_ackEnable;
+    }
+
 private:
     bool open(uint32_t devid);
     void sendVendorSetup(
@@ -86,7 +90,7 @@ private:
 private:
     libusb_context* m_ctx;
     libusb_device_handle *m_handle;
-
+    bool m_ackEnable;
     float m_version;
     uint8_t m_channel;
     uint64_t m_address;

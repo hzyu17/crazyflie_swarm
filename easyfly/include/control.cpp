@@ -319,3 +319,5 @@ void Controller::reset_attController(Vector3f* gyro){
 			(*e_R)(i) = sqrt(e_Rtemp(i,0)*e_Rtemp(i,0) + e_Rtemp(i,1)*e_Rtemp(i,1) + e_Rtemp(i,2)*e_Rtemp(i,2));
 		}
 	}
+	
+	
