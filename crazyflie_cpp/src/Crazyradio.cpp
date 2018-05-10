@@ -244,7 +244,7 @@ void Crazyradio::sendPacket(
 {
     int status;
     int transferred;
-
+    
     if (!m_handle) {
         std::cerr << "No valid Crazyradio handle!" << std::endl;
         return;
@@ -274,11 +274,11 @@ void Crazyradio::sendPacket(
         (unsigned char*)&result,
         sizeof(result) - 1,
         &transferred,
-        /*timeout*/ 100);
+        /*timeout*/ 0);
     if (status != LIBUSB_SUCCESS) {
         std::cerr << "Receive " << libusb_error_name(status) << std::endl;
     }
-
+    printf("hello sendSetpoint %X \n",m_address);
     result.size = transferred - 1;
 }
 
