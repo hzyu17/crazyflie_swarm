@@ -140,24 +140,9 @@ public:
 		
 		sprintf(msg_name,"/vehicle%d/Recording",m_group_index); //recording data
 		m_RecPub = nh.advertise<easyfly::Recording>(msg_name, 5);
+	
 		
-		//attitude estimation
-		sprintf(msg_name,"/vehicle%d/att_est",m_group_index);
-		m_subs.m_yawsub = nh.subscribe<easyfly::att_est>(msg_name,5,&Swarm_Controller::att_estCallback, this);
-		
-		sprintf(msg_name,"/vehicle%d/raw_ctrl_sp",m_group_index);
-		m_subs.m_rawsub = nh.subscribe<easyfly::raw_ctrl_sp>(msg_name,5,&Swarm_Controller::rawctrlCallback, this);
-
-		sprintf(msg_name,"/vehicle%d/tf_prefix/Imu",m_group_index);
-		m_subs.cfIMUsub = nh.subscribe<sensor_msgs::Imu>(msg_name,5,&Swarm_Controller::cfIMUCallback, this);
-
-		sprintf(msg_name,"/vehicle%d/pos_ctrl_sp",m_group_index);
-		m_subs.m_possub = nh.subscribe<easyfly::pos_ctrl_sp>(msg_name,5,&Swarm_Controller::posctrlCallback, this);
-
-		sprintf(msg_name,"/vehicle%d/trj_ctrl_sp",m_group_index);
-		m_subs.m_trjsub = nh.subscribe<easyfly::trj_ctrl_sp>(msg_name,5,&Swarm_Controller::trjctrlCallback, this);
-		
-    sprintf(msg_name,"/vehicle%d/commands",m_group_index);
+    	sprintf(msg_name,"/vehicle%d/commands",m_group_index);
 		m_subs.m_cmdsub = nh.subscribe<easyfly::commands>(msg_name,5,&Swarm_Controller::cmdCallback, this);
 		
 	}
@@ -201,7 +186,7 @@ public:
 				}//case MODE_RAW
 				break;
 				case MODE_POS:{
-					if(m_cmd.flight_state==TakingOff){
+					if(m_cmd.flight_state!=Idle){
 						m_output.att_sp.x = 0.0f;
 						m_output.att_sp.y = 0.0f;
 						m_output.att_sp.z = 0.0f;	
@@ -210,10 +195,6 @@ public:
 					}
 				//}//if flight_mode!=Idle
 			}//case MODE_POS
-				break;
-				case MODE_TRJ:{
-					
-				}
 				break;
 				default:
 				break;

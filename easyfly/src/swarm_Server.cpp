@@ -136,6 +136,7 @@ private:
 		m_output.att_sp.y = msg->att_sp.y;
 		m_output.att_sp.z = msg->att_sp.z;
 		m_output.throttle = msg->throttle;
+    printf("server thrust: %s  %f \n",m_uri.c_str(), m_output.throttle);
         m_cf.sendSetpoint(
           -m_output.att_sp.x * RAD2DEG,
 				  - m_output.att_sp.y * RAD2DEG,
@@ -377,7 +378,7 @@ private:
       fflush(stdout);*/
       //printf("att est from %s vehicle!!\n",m_uri.c_str() );
       m_attpub.publish(msg_att_est);
-      printf("------ vehicle %d Stabilizer Data:  %f    %f    %f \n",m_group_index, m_attest(0), -m_attest(1), m_attest(2));
+      //printf("------ vehicle %d Stabilizer Data:  %f    %f    %f \n",m_group_index, m_attest(0), -m_attest(1), m_attest(2));
   }
 
   

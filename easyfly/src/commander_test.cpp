@@ -30,7 +30,7 @@
 #include <opencv2/imgproc.hpp>
 
 
-int g_vehicle_num=4;	
+int g_vehicle_num=3;	
 int g_joy_num=1;
 const int DimOfVarSpace = 2;
 const float max_thrust = 0.5827*1.3;
@@ -281,10 +281,10 @@ public:
                             for(int v=0;v<g_vehicle_num;++v)
                             {
                                 m_cmdpub_v[v].publish(m_cmd_msg);
-                                ros::Duration(3.0).sleep(); 
+                                //ros::Duration(3.0).sleep(); 
                             }
                             m_flight_state = Idle;
-							//printf("hello!!!!!run\n");
+							printf("hello!!!!!run\n");
 						}
                     }
 				}//end case posctrl mode
