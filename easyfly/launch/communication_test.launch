@@ -5,7 +5,7 @@
   <param name="flight_mode" value="1" type="int" />
   <param name="joy_num" value="1" type="int" />
   <arg name="joy_dev0" default="/dev/input/js0" />
-  <arg name="g_vehicle_num" default="4" />
+  <arg name="g_vehicle_num" default="1" />
   
   <arg name="tf_prefix" default="" />
   <arg name="roll_trim" default="0" />
@@ -30,8 +30,8 @@
     </node>
   </group>
 
-  <!--group ns="vehicle0">
-      <arg name="uri" default="radio://0/0/1M/0xE8E8E8E8E8"/>
+  <group ns="vehicle0">
+      <arg name="uri" default="radio://0/80/250K/0xE7E7E7E7E7"/>
       <node pkg="easyfly" type="swarm_addCf" name="swarm_addCf0" output="screen">
         <param name="uri" value="$(arg uri)" type="string" />
         <param name="group_index" value="0"/>
@@ -43,27 +43,11 @@
       <node pkg="easyfly" type="communication_test" name="communication_test0" output="screen" >
         <param name="group_index" value="0"/>
       </node>
-  </group-->
+  </group>
 
 
   <group ns="vehicle1">
-      <arg name="uri" default="radio://0/80/250K/0xE7E7E7E7E7"/>
-      
-      <node pkg="easyfly" type="swarm_addCf" name="swarm_addCf0" output="screen">
-          <param name="group_index" value="0"/>
-          <param name="g_vehicle_num" value="$(arg g_vehicle_num)" type="int" />
-          <param name="uri" value="$(arg uri)" type="string"/>
-          <param name="tf_prefix" value="$(arg tf_prefix)" />
-          <param name="roll_trim" value="$(arg roll_trim)" />
-          <param name="pitch_trim" value="$(arg pitch_trim)" />
-      </node>
-      <node pkg="easyfly" type="communication_test" name="communication_test1" output="screen" >
-        <param name="group_index" value="0"/>
-      </node>
-  </group>
-
-  <group ns="vehicle2">
-      <arg name="uri" default="radio://0/40/1M/0xE7E7E7E7E7"/>
+      <arg name="uri" default="radio://0/80/250K/0xE8E8E8E8E8"/>
       
       <node pkg="easyfly" type="swarm_addCf" name="swarm_addCf0" output="screen">
           <param name="group_index" value="1"/>
@@ -75,6 +59,22 @@
       </node>
       <node pkg="easyfly" type="communication_test" name="communication_test1" output="screen" >
         <param name="group_index" value="1"/>
+      </node>
+  </group>
+
+  <group ns="vehicle2">
+      <arg name="uri" default="radio://0/80/2M/0xE9E9E9E9E9"/>
+      
+      <node pkg="easyfly" type="swarm_addCf" name="swarm_addCf0" output="screen">
+          <param name="group_index" value="2"/>
+          <param name="g_vehicle_num" value="$(arg g_vehicle_num)" type="int" />
+          <param name="uri" value="$(arg uri)" type="string"/>
+          <param name="tf_prefix" value="$(arg tf_prefix)" />
+          <param name="roll_trim" value="$(arg roll_trim)" />
+          <param name="pitch_trim" value="$(arg pitch_trim)" />
+      </node>
+      <node pkg="easyfly" type="communication_test" name="communication_test1" output="screen" >
+        <param name="group_index" value="2"/>
       </node>
   </group>
 
@@ -190,7 +190,7 @@
       </node>
   </group-->
 
-  <group ns="vehicle10">
+  <!--group ns="vehicle10">
       <arg name="uri" default="radio://1/80/1M/0xE8E8E8E8E8"/>
       
       <node pkg="easyfly" type="swarm_addCf" name="swarm_addCf0" output="screen">
@@ -220,7 +220,7 @@
       <node pkg="easyfly" type="communication_test" name="communication_test" output="screen" >
         <param name="group_index" value="3"/>
       </node>
-  </group>
+  </group-->
 
   <!--group ns="vehicle12">
       <arg name="uri" default="radio://0/120/250K/0xE8E8E8E8E8"/>
